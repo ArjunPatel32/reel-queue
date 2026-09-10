@@ -27,8 +27,13 @@ still untested — no secrets set, no Shortcut built, nothing has ever run.**
   full access to your own accounts. Review is only for posting to other people's.
 - **Token strategy:** long-lived user token → derive the *Page* token from it,
   which never expires. Avoids the 60-day refresh treadmill.
-- **Downloader uses a burner IG account's cookies**, not the posting account —
-  it logs in from datacenter IPs and could get flagged.
+- **Cookies: try cookieless FIRST.** yt-dlp can sometimes fetch public reels
+  with no login at all. If that works, no account is ever exposed and the whole
+  question is moot. Only if downloads fail do we add `IG_COOKIES` — and then
+  from a burner, not the posting account. Rationale Arjun pushed back on and
+  accepted: the posting account already carries the repost risk, so putting the
+  scraping risk on the same account means one flag kills both halves.
+  `download.py` already handles an empty `IG_COOKIES` and just warns.
 
 ## Known risk, accepted
 
@@ -62,21 +67,25 @@ build on an account he'd be OK losing.
 - [x] Public repo created and pushed: https://github.com/ArjunPatel32/reel-queue
 - [x] Actions default workflow permissions set to `write` via API (this is the
       "Read and write permissions" setting — already done, don't redo it)
+- [x] Fine-grained PAT `reel-queue-shortcut` created (Contents: read+write on
+      this repo only, 1yr). **The token value is NOT stored here — this repo is
+      public.** It was pasted into the 2026-09-10 chat; if that's lost, just
+      delete it at github.com/settings/personal-access-tokens and make another,
+      it takes 3 minutes. Worth rotating anyway since it was pasted in cleartext.
+- [x] `.gitattributes` added to force LF endings (Windows was rewriting to CRLF)
 
 ## Not done — pick up here
 
-**Milestone A — get the share button working (~20 min left)**
+**Milestone A — get the share button working (~10 min left)**
 
-1. **[Arjun] Make a burner IG account** for the downloader cookies. Agreed: not
-   his posting account (a personal-ish public account he cares about), not his
-   main personal one either.
-2. **[Arjun] Export cookies.txt** from that burner via the "Get cookies.txt
-   LOCALLY" browser extension — SETUP.md step 5.
-3. **[Claude] Set the `IG_COOKIES` secret** with `gh secret set`.
-4. **[Arjun] Build the iPhone Shortcut** — SETUP.md step 7. Needs a fine-grained
-   PAT scoped to just this repo with Contents: read+write.
-5. **[together] Test ingest** — share a reel, watch the Actions run, confirm it
-   reaches `ready/` with the right `author` field.
+1. **[Arjun] Build the iPhone Shortcut** — SETUP.md step 7, ~8 min. The
+   fine-grained PAT already exists (see note below), so this is the only task.
+2. **[together] Test ingest** — share a reel from IG, watch the Actions run,
+   confirm it reaches `ready/` and that the `author` field holds the original
+   poster's username. **This is the thing to check carefully** — the credit
+   caption is the entire point.
+3. **[decision] Only if the download fails:** add cookies. Burner account →
+   "Get cookies.txt LOCALLY" extension → `gh secret set IG_COOKIES`.
 
 **Milestone B — make it actually post (~40 min)**
 
@@ -111,5 +120,8 @@ build on an account he'd be OK losing.
 wrote all code and docs. Nothing deployed.
 
 **2026-09-10** — Timezone set to San Francisco. Installed git + gh, authed as
-ArjunPatel32, created and pushed the public repo, set Actions write permissions.
-Stopped at: needs a burner IG account + cookies, then the iPhone Shortcut.
+ArjunPatel32, created and pushed the public repo, set Actions write permissions,
+created the phone's PAT. Decided to try downloads cookieless before setting up
+any burner account. Stopped before building the Shortcut — Arjun called it a
+night. **Resume at: Milestone A #1, build the iPhone Shortcut (SETUP.md step 7).**
+Everything up to that point is done and verified; nothing has executed yet.

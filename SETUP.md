@@ -2,9 +2,13 @@
 
 Nothing here costs money. Work through it in order; part 4 is the only slow bit.
 
+> **Steps 1, 3 (permissions) and the git/gh install are already DONE** as of
+> 2026-09-10 — see PROGRESS.md. Pick up at step 7 (the Shortcut), then decide
+> about cookies (step 5) based on whether the cookieless download works.
+
 ---
 
-## 1. The repo (5 min)
+## 1. The repo (5 min) — ✅ DONE
 
 1. Make a **new public repo** on GitHub called `reel-queue`.
    Public matters: public repos get unlimited free Actions minutes, private ones
@@ -18,7 +22,7 @@ Nothing here costs money. Work through it in order; part 4 is the only slow bit.
    git init -b main
    git add -A
    git commit -m "reel queue"
-   git remote add origin https://github.com/YOUR_USERNAME/reel-queue.git
+   git remote add origin https://github.com/ArjunPatel32/reel-queue.git
    git push -u origin main
    ```
 
@@ -139,7 +143,7 @@ lapses — 1 year is reasonable). Copy the token.
 
 Now, in the **Shortcuts** app → **+** → add one action, **Get Contents of URL**:
 
-- **URL:** `https://api.github.com/repos/YOUR_USERNAME/reel-queue/dispatches`
+- **URL:** `https://api.github.com/repos/ArjunPatel32/reel-queue/dispatches`
 - **Method:** `POST`
 - **Headers:**
   - `Authorization` → `Bearer YOUR_FINE_GRAINED_TOKEN`
