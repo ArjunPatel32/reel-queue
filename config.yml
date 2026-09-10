@@ -1,0 +1,23 @@
+# Your local timezone. Everything below is in this timezone.
+timezone: America/Los_Angeles
+
+# The daily window reels get posted in.
+window:
+  start: "09:30"
+  end: "10:00"
+
+# Each morning a random number in this range is chosen (inclusive).
+posts_per_day:
+  min: 1
+  max: 3
+
+# {author} is the original poster's @username.
+caption_template: "@{author}"
+
+video:
+  # Trim this fraction off the edges (0.97 = shave ~3%, kills the original
+  # watermark border and makes the file non-identical to the source).
+  crop: 0.97
+  width: 1080
+  height: 1920
+  crf: 23

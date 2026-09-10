@@ -1,0 +1,48 @@
+# Fired by the iPhone Shortcut via the GitHub repository_dispatch API.
+name: Ingest reel
+
+on:
+  repository_dispatch:
+    types: [queue_reel]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Instagram reel URL
+        required: true
+
+concurrency:
+  group: queue-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Add to queue
+        run: python scripts/enqueue.py --url "${URL}"
+        env:
+          URL: ${{ github.event.client_payload.url || inputs.url }}
+
+      # Attempted immediately, but failure here is fine - the retry cron will
+      # keep trying, and the reel isn't needed until its posting day.
+      - name: Try downloading now
+        continue-on-error: true
+        run: python scripts/download.py
+        env:
+          IG_COOKIES: ${{ secrets.IG_COOKIES }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Save queue state
+        run: python scripts/commit.py "ingest: queue reel"

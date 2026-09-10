@@ -1,0 +1,43 @@
+# The daily poster. Starts ~2h before the window because GitHub's cron runs
+# late; post.py sleeps until the real randomized times, so the drift doesn't
+# reach Instagram. 14:15 UTC = 07:15 PDT / 06:15 PST - adjust if you move
+# the window or change the timezone in config.yml.
+name: Post reels
+
+on:
+  schedule:
+    - cron: "15 14 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Walk through without actually posting
+        type: boolean
+        default: false
+
+concurrency:
+  group: post
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Post today's reels
+        run: python scripts/post.py
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
