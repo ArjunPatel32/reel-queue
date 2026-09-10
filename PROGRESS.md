@@ -2,7 +2,8 @@
 
 Running record of what's done and what's next, so we can pick this up cold.
 
-**Status: code written, nothing deployed or tested yet.**
+**Status: repo live at https://github.com/ArjunPatel32/reel-queue. Code deployed,
+still untested — no secrets set, no Shortcut built, nothing has ever run.**
 
 ---
 
@@ -54,30 +55,39 @@ build on an account he'd be OK losing.
 - [x] `SETUP.md` — full click-through: repo, IG Professional, Meta app, tokens,
       cookies, secrets, the iPhone Shortcut
 - [x] `README.md` — how it works, daily use, troubleshooting
+- [x] Timezone set to `America/Los_Angeles` (San Francisco); `post.yml` cron
+      moved to 14:15 UTC = 07:15 PDT / 06:15 PST, ~2h ahead of the 09:30 window
+- [x] git 2.55 + gh CLI 2.100 installed via winget; git identity configured
+- [x] `gh auth login` as **ArjunPatel32**
+- [x] Public repo created and pushed: https://github.com/ArjunPatel32/reel-queue
+- [x] Actions default workflow permissions set to `write` via API (this is the
+      "Read and write permissions" setting — already done, don't redo it)
 
 ## Not done — pick up here
 
-1. **[Arjun] Create the public GitHub repo and push** — SETUP.md step 1,
-   including the *Read and write permissions* setting for Actions.
-2. **[Arjun] Convert the IG account to Professional + create/link an FB Page** —
-   step 2.
-3. **[Arjun] Meta developer app** — step 3.
-4. **[Arjun] Mint the tokens, get `IG_USER_ID`** — step 4. Fiddliest part; ask
-   Claude to walk through it live if the responses look wrong.
-5. **[Arjun] Burner account cookies** — step 5.
-6. **[Arjun] Add the three repo secrets** — step 6.
-7. **[Arjun] Build the iPhone Shortcut** — step 7.
-8. **[together] Set the real timezone in `config.yml`** — currently defaults to
-   `America/New_York`, never confirmed with Arjun. Also re-check the UTC cron in
-   `post.yml` matches whatever timezone/window ends up being used.
-9. **[together] End-to-end test** — queue 2–3 reels, confirm ingest goes green
-   and items reach `ready/`, then run *Post reels* with dry run checked.
-10. **[together] First real post.**
+**Milestone A — get the share button working (~20 min left)**
+
+1. **[Arjun] Make a burner IG account** for the downloader cookies. Agreed: not
+   his posting account (a personal-ish public account he cares about), not his
+   main personal one either.
+2. **[Arjun] Export cookies.txt** from that burner via the "Get cookies.txt
+   LOCALLY" browser extension — SETUP.md step 5.
+3. **[Claude] Set the `IG_COOKIES` secret** with `gh secret set`.
+4. **[Arjun] Build the iPhone Shortcut** — SETUP.md step 7. Needs a fine-grained
+   PAT scoped to just this repo with Contents: read+write.
+5. **[together] Test ingest** — share a reel, watch the Actions run, confirm it
+   reaches `ready/` with the right `author` field.
+
+**Milestone B — make it actually post (~40 min)**
+
+6. **[Arjun] IG account → Professional, create + link a Facebook Page** — step 2.
+7. **[Arjun] Meta developer app**, keep it in Development mode — step 3.
+8. **[Arjun] Mint tokens + get `IG_USER_ID`** — step 4. Fiddliest part.
+9. **[Claude] Set `IG_USER_ID` and `IG_ACCESS_TOKEN` secrets.**
+10. **[together] Dry run**, then the first real post.
 
 ## Open questions
 
-- **What timezone is Arjun in?** Never asked. `config.yml` and the `post.yml`
-  cron both assume US Eastern.
 - Does he want the ffmpeg cleanup at all, or straight reposts? Currently does a
   3% crop + re-encode + pad to 1080×1920. Easy to turn off (`crop: 1.0`).
 
@@ -98,4 +108,8 @@ build on an account he'd be OK losing.
 ## Log
 
 **2026-09-09** — Designed the system, settled the free/Actions-only approach,
-wrote all code and docs. Nothing deployed. Next session starts at "Not done" #1.
+wrote all code and docs. Nothing deployed.
+
+**2026-09-10** — Timezone set to San Francisco. Installed git + gh, authed as
+ArjunPatel32, created and pushed the public repo, set Actions write permissions.
+Stopped at: needs a burner IG account + cookies, then the iPhone Shortcut.
