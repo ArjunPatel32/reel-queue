@@ -32,8 +32,11 @@ runs:
         command -v ffmpeg >/dev/null || missing="$missing ffmpeg"
         command -v tesseract >/dev/null || missing="$missing tesseract-ocr"
         if [ -n "$missing" ]; then
+          # Rebuilding the man-page index after an install can stall for
+          # 10+ minutes on GitHub's Ubuntu runners; we never read man pages.
+          sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends $missing
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $missing
         fi
         ffmpeg -version | head -1
         tesseract --version | head -1

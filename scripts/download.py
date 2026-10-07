@@ -73,7 +73,12 @@ def fetch(url, cookies, workdir, code):
     cmd.append(url)
     run(cmd)
     info = json.loads((workdir / f"{code}.info.json").read_text(encoding="utf-8"))
-    return workdir / f"{code}.mp4", info
+    videos = [p for p in workdir.glob(f"{code}.*") if p.suffix in (".mp4", ".mov", ".webm", ".mkv")]
+    if not videos:
+        raise RuntimeError("yt-dlp finished but no video file was written")
+    raw = workdir / f"{code}.raw{videos[0].suffix}"
+    videos[0].replace(raw)
+    return raw, info
 
 
 def fetch_and_edit(url, code, cfg, cookies, workdir):
