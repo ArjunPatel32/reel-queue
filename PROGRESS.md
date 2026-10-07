@@ -2,9 +2,12 @@
 
 Running record of what's done and what's next, so we can pick this up cold.
 
-**Status (2026-10-07, end of session): download + editing PROVEN on GitHub's
-servers (logged-out, no cookies). Waiting on Arjun for the Shortcut (SETUP
-step 2) and the Meta setup (steps 3–6). Nothing posted yet.**
+**Status (2026-10-07, end of session): everything up to posting is BUILT AND
+PROVEN on GitHub's servers — a real ingest run queued, downloaded (logged-out),
+credited, edited and staged a reel; the poster planned the day and dry-ran
+correctly; 81/81 self-tests pass. Waiting on Arjun for the iPhone Shortcut
+(SETUP step 2) and the Meta setup (steps 3–6). Nothing posted yet; queue is
+empty (the test reel was removed).**
 
 ---
 
@@ -158,11 +161,16 @@ that came out of it — keep them when changing code:
 
 **Milestone A — prove download + editing work on GitHub's servers**
 
-1. [x] check.yml green — all self-tests pass, incl. the synthetic outro clip
+1. [x] check.yml green — 81/81 self-tests (outro card, persistent watermark,
+       reaction still, silent slate, letterboxes, git conflicts, duplicates…)
 2. [x] Preview on a real public reel (DQwMwTLEvbn): **logged-out download
        works from a GitHub runner**, credit came out `@david_editor_`
        (correct), edit looked good (brighter/punchier, no outro on that one)
-3. [ ] Test outro removal on a real reel that HAS an end card (Arjun can run
+3. [x] **Full ingest run** (workflow_dispatch, exactly what the Shortcut
+       does): queued in 35 s, downloaded + edited + staged in ~4 min. Test
+       reel then removed from ready/ and the release.
+3b. [x] Poster dry runs (post_now + planner) behave correctly.
+3c. [ ] Test outro removal on a real reel that HAS an end card (Arjun can run
        Preview edit on one he knows has an outro)
 4. [ ] Cookies only if downloads start failing (SETUP step 8)
 
@@ -188,6 +196,11 @@ that came out of it — keep them when changing code:
   Meta's example — probably fine.
 - Outro detection on real reels (only tested on a synthetic clip so far).
 - Whether bot commits reset GitHub's 60-day scheduled-workflow auto-disable.
+- The hourly cron: no scheduled run fired in the first ~2 h after switching
+  (consistent with GitHub's current lag/drops). Check the Actions tab next
+  session; if it's still sparse, do SETUP step 9 (cron-job.org).
+- apt cache: saved as `apt-debs-ubuntu24-<image>-ffmpeg-tesseract-v1` (68 MB).
+  Media setup now ~30 s–2 min instead of 4–20 min.
 
 ---
 
