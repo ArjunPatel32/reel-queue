@@ -105,6 +105,30 @@ Found by reading the Actions history — none of the old code had ever worked:
 - [x] (2026-10-07) `check.yml` + `scripts/selftest.py` — actionlint + offline
       tests incl. a synthetic clip with a fake "Follow @testcreator" end card
 
+## Code review (2026-10-07)
+
+An adversarial review workflow (4 reviewers + 4 skeptic verifiers) found 33
+issues, 28 confirmed real; all 28 fixed in commit 4c1d3ef. The design rules
+that came out of it — keep them when changing code:
+
+- **Never put the IG token in a URL**; scrub it from any text that's logged
+  or committed (`post.scrub`). The repo is public.
+- **Sync before acting**: checkouts use `ref: github.ref_name` (branch tip),
+  post.py `sync()`s before every post. Runs that waited in a concurrency
+  queue otherwise act on the commit from when they were triggered.
+- **Commit the container id before media_publish**; next attempt checks
+  `status_code == PUBLISHED` before posting again. Delete the release asset
+  only after the receipt is pushed.
+- `commit_and_push` resolves rebase conflicts: newer write wins a
+  both-modified file; deletion beats modification. Retries ~5 min.
+- One bad reel must never block the queue: duplicates retired, 404 asset →
+  skip, attempt caps, permanent edit errors (`EditError`) give up at once.
+- A share must never be lost: committed before the slow install; unresolved
+  /share/ links queued as `share-<id>` with `needs_resolve`.
+- Outro cutting errs towards NOT cutting: needs text not seen in an 8-frame
+  baseline, whole-word/@handle matches, and ≤1.5 s of text-free tail after;
+  a trailing still is only cut when silent or carrying outro text.
+
 ## Research findings worth not re-deriving (2026-10-07)
 
 - Graph API: v26.0 current; post.py uses **v24.0, valid until 2028-02-18**.

@@ -55,12 +55,12 @@ runs:
           echo "installed $pkgs from the cache"
         else
           echo "cache miss - downloading from the Ubuntu mirror"
-          rm -rf "$HOME/apt-debs" && mkdir -p "$HOME/apt-debs/partial"
-          sudo apt-get update -qq
+          sudo apt-get clean
+          sudo apt-get update -qq -o Acquire::Retries=5
           sudo -E apt-get install -y -qq --no-install-recommends --download-only \
-            -o Dir::Cache::archives="$HOME/apt-debs" $pkgs
-          sudo chown -R "$USER" "$HOME/apt-debs"
-          rm -rf "$HOME/apt-debs/partial" "$HOME/apt-debs/lock"
+            -o Acquire::Retries=5 $pkgs
+          rm -rf "$HOME/apt-debs" && mkdir -p "$HOME/apt-debs"
+          cp /var/cache/apt/archives/*.deb "$HOME/apt-debs/"
           sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb
         fi
         ffmpeg -version | head -1
