@@ -27,18 +27,41 @@ runs:
         yt-dlp --version
         python -c "import curl_cffi; print('curl_cffi', curl_cffi.__version__)"
 
+    # Ubuntu's package mirror is wildly slow from GitHub's runners (2 to 20+
+    # minutes for ffmpeg). So the .deb files are kept in GitHub's own cache,
+    # keyed on the runner image version, and installed from there - only the
+    # first run after each weekly image update goes to the mirror.
+    - if: inputs.media-tools == 'true'
+      id: image
+      shell: bash
+      run: echo "version=${ImageOS:-ubuntu}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.media-tools == 'true'
+      uses: actions/cache@v5
+      with:
+        path: ~/apt-debs
+        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v1
+
     - if: inputs.media-tools == 'true'
       shell: bash
       run: |
-        missing=""
-        command -v ffmpeg >/dev/null || missing="$missing ffmpeg"
-        command -v tesseract >/dev/null || missing="$missing tesseract-ocr"
-        if [ -n "$missing" ]; then
-          # Rebuilding the man-page index after an install can stall for
-          # 10+ minutes on GitHub's Ubuntu runners; we never read man pages.
-          sudo rm -f /var/lib/man-db/auto-update
+        # Rebuilding the man-page index after an install also stalls for
+        # minutes on these runners; we never read man pages.
+        sudo rm -f /var/lib/man-db/auto-update
+        export DEBIAN_FRONTEND=noninteractive
+        pkgs="ffmpeg tesseract-ocr"
+        if compgen -G "$HOME/apt-debs/*.deb" > /dev/null \
+           && sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb; then
+          echo "installed $pkgs from the cache"
+        else
+          echo "cache miss - downloading from the Ubuntu mirror"
+          rm -rf "$HOME/apt-debs" && mkdir -p "$HOME/apt-debs/partial"
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $missing
+          sudo -E apt-get install -y -qq --no-install-recommends --download-only \
+            -o Dir::Cache::archives="$HOME/apt-debs" $pkgs
+          sudo chown -R "$USER" "$HOME/apt-debs"
+          rm -rf "$HOME/apt-debs/partial" "$HOME/apt-debs/lock"
+          sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb
         fi
         ffmpeg -version | head -1
         tesseract --version | head -1

@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 
 from common import (
+    POSTED,
     QUEUE,
     READY,
     RELEASE_TAG,
@@ -25,22 +26,33 @@ from common import (
     log,
     repo_slug,
     run,
+    shortcodes_in,
     write_item,
 )
-from edit import make_post_video
+from edit import EditError, make_post_video
+from enqueue import SHARE_LINK, resolve_share_link, shortcode_of
 
 MAX_ATTEMPTS = 40
+# Errors that mean "Instagram is blocking this runner" rather than "this reel
+# is broken". Two in a row on different reels ends the run early.
+BLOCKED = re.compile(r"rate.?limit|429|login|not granting access", re.I)
 
 HANDLE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
-# "credit: @x", "cr @x", "via @x", "🎥 @x", "video by @x" ... in the poster's
-# caption. Repost pages usually name the real creator this way. A bare
-# "by @x" is deliberately NOT matched - "music by @x" / "edit by @x" would
-# credit the wrong person.
-CREDIT = re.compile(
-    r"(?:credits?|\bcr\b|\bvia|(?:video|reel|clip|content|filmed|made|created|posted) by"
-    r"|🎥|📹|🎬|📸|©)"
-    r"\s*(?:to)?\s*[:\-–—]?\s*@([A-Za-z0-9._]{1,30})",
-    re.IGNORECASE,
+MENTION = re.compile(r"@([A-Za-z0-9._]{1,30})")
+# What makes an @mention a credit for the video itself ("credit: @x",
+# "cr @x", "via @x", "©️ @x", "🎥 @x", "video by @x", "creds @x"...) ...
+CREDIT_CONTEXT = re.compile(
+    r"\b(?:credits?|creds?|cr|via|source|original)\b|©|🎥|📹|🎬|📽"
+    r"|\b(?:video|reel|clip|content|filmed|made|created|posted|recorded)\s+by\b"
+    r"|\bvideo\s*:",
+    re.I,
+)
+# ... and what makes it a credit for something else ("music cr @x",
+# "song credit: @x", "shop my outfit via @x", "edit by @x").
+OTHER_CONTEXT = re.compile(
+    r"\b(?:music|song|audio|sound|beat|track|instrumental|shop|outfit|wearing|"
+    r"edit(?:ed|or|s|ing)?|makeup|hair|styl\w*|location|thumbnail|cover)\b|📍|🎵|🎶|🎧",
+    re.I,
 )
 
 
@@ -63,21 +75,35 @@ def poster_of(info):
 
 
 def credited_in(description, poster):
-    """A different account the poster credits in their caption, if any."""
-    for m in CREDIT.finditer(description or ""):
+    """A different account the poster credits for the video in their
+    caption, if any. Each @mention is judged by the words just before it on
+    the same line (since the previous mention), so "audio cr: @singer /
+    🎥 cr: @creator" credits @creator, not @singer."""
+    text = description or ""
+    seg_start = 0
+    for m in MENTION.finditer(text):
+        before = text[seg_start:m.start()]
+        seg_start = m.end()
+        before = re.split(r"[\n|•]", before)[-1]
         handle = m.group(1).rstrip(".")
-        if HANDLE.match(handle) and handle.lower() != (poster or "").lower():
+        if not HANDLE.match(handle) or handle.lower() == (poster or "").lower():
+            continue
+        if OTHER_CONTEXT.search(before):
+            continue
+        if CREDIT_CONTEXT.search(before):
             return handle
     return None
 
 
 def _yt_dlp(url, cookies, workdir, code):
+    """Run yt-dlp and return the path of the finished (merged) video."""
     cmd = [
         "yt-dlp",
         "--no-playlist",
         "--write-info-json",
         "-f", "bv*+ba/b",
         "--merge-output-format", "mp4",
+        "--print", "after_move:filepath",
         "-o", str(workdir / f"{code}.%(ext)s"),
     ]
     if cookies:
@@ -90,35 +116,39 @@ def _yt_dlp(url, cookies, workdir, code):
     if proc.returncode != 0:
         tail = "\n".join(proc.stderr.strip().splitlines()[-3:])
         raise RuntimeError(f"yt-dlp failed: {tail}")
+    printed = [line for line in proc.stdout.splitlines() if line.strip()]
+    if not printed or not pathlib.Path(printed[-1]).exists():
+        raise RuntimeError("yt-dlp finished but didn't report a video file")
+    return pathlib.Path(printed[-1])
 
 
 def fetch(url, cookies, workdir, code):
     """One yt-dlp call for both the video and its metadata, so Instagram only
     sees one round of requests per reel. If a cookie-backed attempt fails
     (a flagged or expired burner session makes yt-dlp error out rather than
-    fall back), try once more logged-out."""
+    fall back), try once more logged-out from a clean slate."""
     try:
-        _yt_dlp(url, cookies, workdir, code)
+        video = _yt_dlp(url, cookies, workdir, code)
     except RuntimeError:
         if not cookies:
             raise
         log("    failed with IG_COOKIES - retrying logged-out (the cookies may be dead)")
-        _yt_dlp(url, None, workdir, code)
+        for leftover in workdir.glob(f"{code}.*"):
+            leftover.unlink()
+        video = _yt_dlp(url, None, workdir, code)
 
     info = json.loads((workdir / f"{code}.info.json").read_text(encoding="utf-8"))
     if info.get("_type") == "playlist":
-        raise RuntimeError("this is a carousel post, not a single reel - skipping")
-    videos = [p for p in workdir.glob(f"{code}.*") if p.suffix in (".mp4", ".mov", ".webm", ".mkv")]
-    if not videos:
-        raise RuntimeError("yt-dlp finished but no video file was written")
-    raw = workdir / f"{code}.raw{videos[0].suffix}"
-    videos[0].replace(raw)
+        raise EditError("this is a carousel post, not a single reel")
+    raw = workdir / f"{code}.raw{video.suffix}"
+    video.replace(raw)
     return raw, info
 
 
 def fetch_and_edit(url, code, cfg, cookies, workdir):
     """Download + edit one reel. Returns (raw_path, final_path, meta, edit_info)
     where meta has `author` (who gets the credit) and `poster` (who posted it)."""
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix=f"{code}-", dir=workdir))
     raw, info = fetch(url, cookies, workdir, code)
     poster = poster_of(info)
     if not poster:
@@ -142,11 +172,14 @@ def fetch_and_edit(url, code, cfg, cookies, workdir):
 def ensure_release(tag, title):
     existing = subprocess.run(["gh", "release", "view", tag], capture_output=True, text=True)
     if existing.returncode != 0:
-        run([
+        created = subprocess.run([
             "gh", "release", "create", tag,
             "--title", title,
             "--notes", "Video files staged here by the reel-queue workflows.",
-        ])
+        ], capture_output=True, text=True)
+        # Two runs can race to create it; losing that race is fine.
+        if created.returncode != 0 and "already exists" not in created.stderr:
+            raise RuntimeError(f"could not create release {tag}: {created.stderr.strip()}")
 
 
 def upload(path, asset, tag=RELEASE_TAG, title="Reel media"):
@@ -158,12 +191,41 @@ def upload(path, asset, tag=RELEASE_TAG, title="Reel media"):
     return f"https://github.com/{repo_slug()}/releases/download/{tag}/{asset}"
 
 
-def process(item, cfg, cookies, workdir):
-    url, code = item["url"], item["shortcode"]
-    log(f"--- {code}")
+def resolve(item):
+    """Items queued from an unresolved /share/ link get their real shortcode
+    here, on a later attempt. Returns False if it still can't be resolved."""
+    if not item.get("needs_resolve"):
+        return True
+    url = resolve_share_link(item["url"])
+    code = shortcode_of(url or "")
+    if not code:
+        return False
+    log(f"    share link resolved -> {code}")
+    item.update({
+        "shortcode": code,
+        "url": f"https://www.instagram.com/reel/{code}/",
+        "needs_resolve": False,
+    })
+    return True
 
-    _, final, meta, edit_info = fetch_and_edit(url, code, cfg, cookies, workdir)
-    asset_url = upload(final, f"{code}.mp4")
+
+def process(item, cfg, cookies, workdir):
+    path = pathlib.Path(item["_path"])
+    log(f"--- {item['shortcode']}")
+    if not resolve(item):
+        raise RuntimeError("couldn't resolve the instagram.com/share/ link yet (login wall?)")
+
+    code = item["shortcode"]
+    if code in shortcodes_in(READY, POSTED):
+        # The same reel was shared twice; the first copy is already handled.
+        log("    already in ready/ or posted/ - dropping this duplicate")
+        path.unlink()
+        return
+
+    _, final, meta, edit_info = fetch_and_edit(item["url"], code, cfg, cookies, workdir)
+    # Name the asset after the queue file, not the shortcode, so two queue
+    # entries can never share (or overwrite) one video.
+    asset_url = upload(final, f"{path.stem}.mp4")
 
     ready = dict(item)
     ready.pop("_path", None)
@@ -181,15 +243,14 @@ def process(item, cfg, cookies, workdir):
         ready["skip"] = True
         ready["skip_reason"] = "no audio track in the download"
         log("    no audio - parked in ready/ with skip=true, it won't be posted")
-    name = pathlib.Path(item["_path"]).name
-    write_item(READY / name, ready)
-    pathlib.Path(item["_path"]).unlink()
+    write_item(READY / path.name, ready)
+    path.unlink()
     log(f"    ready -> {asset_url}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", help="just this shortcode (ingest uses this)")
+    ap.add_argument("--only", help="just this queue file stem (ingest uses this)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -199,33 +260,43 @@ def main():
 
     pending = [i for i in list_items(QUEUE) if not i.get("gave_up")]
     if args.only:
-        pending = [i for i in pending if i["shortcode"] == args.only]
+        pending = [i for i in pending if pathlib.Path(i["_path"]).stem == args.only]
+    # Least-tried first, so one reel that keeps failing can't always go first
+    # and stall the rest.
+    pending.sort(key=lambda i: (int(i.get("attempts", 0)), pathlib.Path(i["_path"]).name))
     if not pending:
         log("nothing pending")
         return
 
     log(f"{len(pending)} pending")
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="reels-"))
-    failures = 0
+    failures = blocked_streak = 0
 
     for item in pending:
         path = pathlib.Path(item["_path"])
         try:
             process(item, cfg, cookies, workdir)
+            blocked_streak = 0
         except Exception as exc:  # keep going; a bad item must not block the rest
             failures += 1
             attempts = int(item.get("attempts", 0)) + 1
             item["attempts"] = attempts
             item["last_error"] = str(exc)[-500:]
             log(f"    failed (attempt {attempts}): {str(exc)[-400:]}")
-            if attempts >= MAX_ATTEMPTS:
+            if isinstance(exc, EditError):
+                # Deterministic - downloading it again won't change anything.
+                item["gave_up"] = True
+                log("    this reel can't be made postable - giving up on it")
+            elif attempts >= MAX_ATTEMPTS:
                 item["gave_up"] = True
                 log("    giving up on this one, leaving it in queue/ for you to look at")
             write_item(path, item)
-            # A rate-limit or login wall will hit every other item the same
-            # way from this IP - stop instead of hammering Instagram.
-            if re.search(r"rate.?limit|429|login|not granting access", str(exc), re.I):
-                log("    looks like Instagram is blocking this runner - stopping for now")
+            # A rate-limit/login wall hits every reel the same way from this
+            # IP. One such error can also just be a private or deleted reel,
+            # so stop only after two in a row.
+            blocked_streak = blocked_streak + 1 if BLOCKED.search(str(exc)) else 0
+            if blocked_streak >= 2:
+                log("    Instagram seems to be blocking this runner - stopping for now")
                 break
 
     if failures:

@@ -35,9 +35,12 @@ Copy the token. **Also delete the old `reel-queue-shortcut` token** (the one
 with *Contents* access, made 2026-09-10) — it could change the code, it was
 pasted into a chat, and nothing uses it any more.
 
-> Why Actions-only: this token lives on your phone. With *Actions* access the
-> worst anyone can do with it is trigger a run. A *Contents* token could
-> rewrite the scripts that hold your Instagram token.
+> Why Actions-only: this token lives on your phone. A *Contents* token could
+> rewrite the scripts that hold your Instagram token. An *Actions* token
+> can't read your Instagram token or change any code — but anyone holding it
+> **can make the bot post any reel they choose to your account**. So if your
+> phone is lost or the token leaks, revoke it straight away (same settings
+> page) and make a new one.
 
 ### b. Build the Shortcut
 
@@ -232,5 +235,7 @@ runs. Posts still go out (each run catches up on anything overdue, spaced
    - Advanced → Request method **POST**, headers
      `Authorization: Bearer TOKEN`, `Accept: application/vnd.github+json`,
      body `{"ref":"main"}`
-3. Set a calendar reminder for the token's expiry — cron-job.org silently
-   disables a job after 25 failures.
+3. Give that token a short expiry (90 days) and set a calendar reminder —
+   cron-job.org silently disables a job after 25 failures. Like the phone
+   token, anyone holding it could trigger posts, so revoke it if your
+   cron-job.org account is ever compromised.

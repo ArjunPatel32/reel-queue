@@ -2,8 +2,9 @@
 
 Running record of what's done and what's next, so we can pick this up cold.
 
-**Status (2026-10-07): code rewritten and pushed; first real test runs in
-progress. Still no Shortcut, no Meta secrets, nothing posted.**
+**Status (2026-10-07, end of session): download + editing PROVEN on GitHub's
+servers (logged-out, no cookies). Waiting on Arjun for the Shortcut (SETUP
+step 2) and the Meta setup (steps 3–6). Nothing posted yet.**
 
 ---
 
@@ -39,8 +40,25 @@ progress. Still no Shortcut, no Meta secrets, nothing posted.**
   An hourly job against a daily plan keeps posts within ~1 h of plan. Posts are
   spread across a 10:00–20:00 Pacific window (`window` in config.yml).
 - **(2026-10-07) Resumable upload** to Meta (we send the bytes) instead of
-  handing Meta the GitHub release URL, which redirects and is served as
-  application/octet-stream.
+  handing Meta the GitHub release URL. Verified: github.com/robots.txt has
+  `Disallow: /*/download`, release links 302 to a signed URL, and they're
+  served as application/octet-stream — three reasons Meta's fetcher would
+  reject them. Resumable upload is **Facebook-Login-only**, so the Meta app
+  must use the "API setup with Facebook login" setup, not Instagram login
+  (an app can only have one). SETUP.md step 4 says this.
+- **(2026-10-07) Shortcut uses workflow_dispatch** on ingest.yml with an
+  **Actions-only** fine-grained PAT (can't touch code), not repository_dispatch
+  with a Contents token. The old Contents PAT should be deleted.
+- **(2026-10-07) Credit:** `channel` from yt-dlp = the poster. If the poster's
+  caption credits someone else ("credit: @x", "via @x", "🎥 @x", "video by
+  @x"), that account is credited instead. Bare "by @x" is NOT trusted (music
+  by / edit by).
+- **(2026-10-07) Crop off** (was 3%) — it cost picture and doesn't defeat
+  Instagram's matching. Symmetric baked-in black bars ARE removed (cropdetect).
+- **(2026-10-07) Reels with no audio** are parked in ready/ with skip=true
+  (usually licensed music that didn't download) instead of posted muted.
+- **(2026-10-07) GitHub Models is retired** (2026-07-30) — no free LLM in
+  Actions. Moot for now since Arjun chose simple credit captions.
 
 ## Known risk, accepted
 
@@ -87,33 +105,65 @@ Found by reading the Actions history — none of the old code had ever worked:
 - [x] (2026-10-07) `check.yml` + `scripts/selftest.py` — actionlint + offline
       tests incl. a synthetic clip with a fake "Follow @testcreator" end card
 
+## Research findings worth not re-deriving (2026-10-07)
+
+- Graph API: v26.0 current; post.py uses **v24.0, valid until 2028-02-18**.
+  v21.0 dies 2027-01-21. Calls to dead versions get silently upgraded.
+- Reels spec: MP4, no edit lists, moov first, H.264/HEVC closed GOP 4:2:0,
+  23–60 fps, AAC ≤48 kHz 128k, 3 s–15 min, ≤300 MB. edit.py matches.
+- Publishing cap 50–100 posts/24 h (Meta's docs disagree), 400 containers/24 h.
+- yt-dlp logged-out Instagram **requires curl-cffi** (browser impersonation;
+  Instagram 429s plain HTTP/1.1). Extractor reworked 2026-06-28.
+  Logged-out quality ceiling is ~1080x1920 VP9 @1.7 Mbps + 48 kbps audio.
+- **Instagram originality policy:** accounts reposting others' content 10+
+  times in 30 days aren't recommended (followers-only reach); reposts get
+  replaced by the original in recommendations. Crop/colour/credit/subtitles
+  are "low-effort" and don't count. Own commentary/voiceover/on-screen
+  context does. Native Repost button (Aug 2025) has no API. Told Arjun.
+- GitHub cron: widely 3–10 h late since 2026-08-26, sometimes drops runs; no
+  fix from GitHub. Dispatch events start in seconds → cron-job.org is the
+  free fix (SETUP step 9, optional).
+- ubuntu-latest moves to 26.04 (ffmpeg 8, Python 3.14) Oct 19–Nov 19 2026 —
+  workflows are pinned to ubuntu-24.04. Revisit after testing 26.04.
+- apt install of ffmpeg+tesseract takes ~4.5 min per job (was 14 before the
+  man-db fix). Acceptable for background jobs.
+- Dev-mode Meta app posts: unconfirmed whether they're public. Check the first
+  post from a logged-out browser. Going Live needs Business Verification.
+
 ## Not done — pick up here
 
 **Milestone A — prove download + editing work on GitHub's servers**
 
-1. [ ] check.yml green (first run in progress at time of writing)
-2. [ ] Preview run on a real public reel (DQwMwTLEvbn) — does a logged-out
-       download work from a runner? Is `channel` the right handle? Does the
-       edit look good? (in progress at time of writing)
-3. [ ] If logged-out download fails: burner account cookies → `IG_COOKIES`.
+1. [x] check.yml green — all self-tests pass, incl. the synthetic outro clip
+2. [x] Preview on a real public reel (DQwMwTLEvbn): **logged-out download
+       works from a GitHub runner**, credit came out `@david_editor_`
+       (correct), edit looked good (brighter/punchier, no outro on that one)
+3. [ ] Test outro removal on a real reel that HAS an end card (Arjun can run
+       Preview edit on one he knows has an outro)
+4. [ ] Cookies only if downloads start failing (SETUP step 8)
 
 **Milestone B — share button**
 
-4. [ ] **[Arjun] Build the iPhone Shortcut** — SETUP.md step 7.
-5. [ ] Share a reel, confirm it reaches `ready/` with the right `author`.
+5. [ ] **[Arjun] New Actions-only PAT + build the Shortcut** — SETUP step 2.
+       Delete the old Contents PAT.
+6. [ ] Share a reel, confirm it reaches `ready/` with the right `author`.
 
 **Milestone C — make it actually post (~40 min)**
 
-6. [ ] **[Arjun]** IG → Professional, Meta app, tokens (SETUP.md steps 2–4).
-7. [ ] **[Claude]** Set `IG_USER_ID` and `IG_ACCESS_TOKEN` secrets.
-8. [ ] Dry run, then `post_now` for the first real post.
+7. [ ] **[Arjun]** IG → Professional + Page, Meta app (Facebook login
+       setup!), tokens — SETUP steps 3–5.
+8. [ ] **[Arjun]** Paste `IG_USER_ID` / `IG_ACCESS_TOKEN` into repo secrets
+       (step 6) — directly in GitHub, not in chat.
+9. [ ] Dry run, then `post_now`; check the post is visible logged-out.
+10. [ ] Optional: cron-job.org trigger for punctual posting (step 9).
 
 ## Things that have NOT been verified
 
 - The resumable-upload posting path has never run against Meta (needs tokens).
-- Graph API version bumped to v24.0 in post.py — confirm against the research
-  results / Meta's changelog.
+  Docs-verified, not live-verified. `share_to_feed` with resumable isn't in
+  Meta's example — probably fine.
 - Outro detection on real reels (only tested on a synthetic clip so far).
+- Whether bot commits reset GitHub's 60-day scheduled-workflow auto-disable.
 
 ---
 
@@ -130,4 +180,6 @@ created the phone's PAT. Stopped before building the Shortcut.
 post). Found the workflows had never run (YAML bug), the credit field was
 wrong, and the daily cron was hours late. Arjun set the posting rules and
 editing goals (see decisions). Rewrote editing + posting, added preview and
-self-test workflows, pushed, started live tests.
+self-test workflows. Ran a 4-area research pass with independent verifiers
+(findings above) and applied it. Live-tested: logged-out download + edit of a
+real reel on a runner works. Ran an adversarial code review workflow.

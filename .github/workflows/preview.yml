@@ -18,7 +18,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      # The branch tip, not the commit from when this run was triggered -
+      # a run that waited in a queue would otherwise act on stale state.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
 
       - uses: ./.github/actions/setup
         with:

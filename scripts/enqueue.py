@@ -8,11 +8,12 @@ even if Instagram blocks the download for the next several hours.
 import argparse
 import datetime as dt
 import os
+import pathlib
 import re
 
 import requests
 
-from common import QUEUE, READY, POSTED, list_items, log, write_item
+from common import POSTED, QUEUE, READY, log, run, shortcodes_in, write_item
 
 # instagram.com/reel/CODE, /reels/CODE, /p/CODE, /tv/CODE, and the newer
 # instagram.com/<username>/reel/CODE form.
@@ -56,6 +57,20 @@ def resolve_share_link(url):
     return None
 
 
+def shared_at():
+    """When the share happened: the workflow run's creation time (GitHub
+    stamps it at dispatch). Runs then spend minutes on setup in parallel, so
+    'now' at this step could put two quick shares in the wrong order."""
+    run_id, repo = os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_REPOSITORY")
+    if run_id and repo:
+        try:
+            created = run(["gh", "api", f"repos/{repo}/actions/runs/{run_id}", "--jq", ".created_at"])
+            return dt.datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except (RuntimeError, ValueError) as exc:
+            log(f"(couldn't read the run's start time, using now: {exc})")
+    return dt.datetime.now(dt.timezone.utc)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
@@ -64,38 +79,46 @@ def main():
     # The share sheet sometimes hands over "caption text https://..." rather
     # than a bare URL.
     found = URL_IN_TEXT.search(args.url)
-    raw = found.group(0) if found else args.url.strip()
+    raw = found.group(0).rstrip(").,") if found else args.url.strip()
 
-    code = shortcode_of(raw)
+    code, needs_resolve = shortcode_of(raw), False
     if not code and SHARE_LINK.search(raw):
-        resolved = resolve_share_link(raw)
-        code = shortcode_of(resolved or "")
+        code = shortcode_of(resolve_share_link(raw) or "")
+        if not code:
+            # Instagram walled the lookup. Queue it anyway under the share id
+            # and let the download step resolve it on a later attempt - a
+            # shared reel must never be lost.
+            tail = raw.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+            share_id = re.sub(r"[^A-Za-z0-9_-]", "", tail)[:40]
+            code, needs_resolve = f"share-{share_id or 'link'}", True
+            log("share link didn't resolve yet - queueing it to resolve later")
     if not code:
         raise SystemExit(f"not an Instagram reel/post URL: {args.url!r}")
 
-    for folder in (QUEUE, READY, POSTED):
-        for existing in list_items(folder):
-            if existing.get("shortcode") == code:
-                log(f"already have {code} in {folder.name}/ - skipping")
-                return
+    # Matched on file names, so one hand-broken JSON file can't stop a share.
+    if code in shortcodes_in(QUEUE, READY, POSTED):
+        log(f"already have {code} - skipping")
+        return
 
-    now = dt.datetime.now(dt.timezone.utc)
+    when = shared_at()
     item = {
         "shortcode": code,
-        "url": f"https://www.instagram.com/reel/{code}/",
-        "added_at": now.isoformat(),
+        "url": raw if needs_resolve else f"https://www.instagram.com/reel/{code}/",
+        "added_at": when.isoformat(),
         "attempts": 0,
         "last_error": None,
     }
-    name = f"{now.strftime('%Y%m%dT%H%M%S')}-{code}.json"
+    if needs_resolve:
+        item["needs_resolve"] = True
+    name = f"{when.strftime('%Y%m%dT%H%M%S')}-{code}.json"
     write_item(QUEUE / name, item)
     log(f"queued {code} -> queue/{name}")
 
-    # Tell the workflow which reel to download straight away.
+    # Tell the workflow which item to download straight away.
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as f:
-            f.write(f"shortcode={code}\n")
+            f.write(f"stem={pathlib.Path(name).stem}\n")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,8 @@
   1. Trim a fixed amount off the start/end (config, default 0).
   2. Find and cut the creator's outro - a "follow me" card, a logo slate, the
      TikTok end screen - so the clip ends on the actual content. Credit lives
-     in the caption instead.
+     in the caption instead. Cutting real content is worse than leaving an
+     outro in, so every rule here errs towards NOT cutting.
   3. Strip baked-in black bars, reframe to 1080x1920 (blurred fill for clips
      that aren't 9:16), polish colour/sharpness, level the loudness, and
      encode to Instagram's Reels spec.
@@ -13,6 +14,7 @@ logs what it decided, so a bad cut is easy to trace back from the Actions log.
 """
 
 import json
+import math
 import pathlib
 import re
 import shutil
@@ -21,21 +23,28 @@ import tempfile
 
 from common import log, run
 
-# On-screen words that mark an outro. Matched against OCR text from the tail
-# of the clip, and only counted when they DON'T also appear mid-video (a
-# watermark that's there the whole time isn't an end card).
-OUTRO_WORDS = (
-    "follow", "subscribe", "link in bio", "for more", "more videos",
-    "part 2", "tiktok", "youtube", "thanks for watching",
+# On-screen words that mark an outro. Matched as whole words against OCR
+# text from the tail, and only counted when they DON'T also appear mid-video
+# (a watermark that's there the whole time isn't an end card).
+OUTRO_WORDS = re.compile(
+    r"\b(follow|subscribe|link in bio|more videos|part 2|tiktok|youtube|"
+    r"thanks for watching)\b"
 )
 # Logos from other apps. Instagram won't recommend reels that carry them, so
 # they get flagged (not removed - painting over a creator's watermark is
 # worse than leaving it).
-FOREIGN_MARKS = ("tiktok", "capcut", "youtube", "snapchat")
+FOREIGN_MARKS = re.compile(r"\b(tiktok|capcut|youtube|snapchat)\b")
 
 # Instagram's publishing API limits for reels.
 MIN_SECONDS, MAX_SECONDS = 3, 900
 MAX_BYTES = 300 * 1_000_000
+# Below this the audio over a still frame counts as silence.
+SILENT_DB = -45.0
+
+
+class EditError(RuntimeError):
+    """This reel can't be turned into something Instagram accepts. Retrying
+    the download won't change that."""
 
 
 # --------------------------------------------------------------- inspection
@@ -50,11 +59,17 @@ def probe(path):
     video = next(s for s in data["streams"] if s["codec_type"] == "video")
     num, den = (video.get("avg_frame_rate") or "30/1").split("/")
     fps = float(num) / float(den) if float(den) else 30.0
+    duration = float(data["format"]["duration"])
+    try:
+        video_duration = float(video.get("duration") or duration)
+    except ValueError:
+        video_duration = duration
     return {
-        "duration": float(data["format"]["duration"]),
+        "duration": duration,
+        "video_duration": min(video_duration, duration),
         "width": int(video["width"]),
         "height": int(video["height"]),
-        "fps": fps,
+        "fps": fps if fps > 0 else 30.0,
         "has_audio": any(s["codec_type"] == "audio" for s in data["streams"]),
     }
 
@@ -80,7 +95,7 @@ def scene_cuts(path, threshold=0.3):
 def trailing_freeze(path, duration):
     """Start of a still frame that runs to the end of the clip, if any."""
     out = _ffmpeg_log([
-        "-i", str(path), "-an", "-vf", "scale=320:-2,freezedetect=n=0.003:d=0.7",
+        "-i", str(path), "-an", "-vf", "scale=320:-2,freezedetect=n=0.001:d=0.7",
     ])
     starts = [float(t) for t in re.findall(r"freeze_start: ([\d.]+)", out)]
     ends = [float(t) for t in re.findall(r"freeze_end: ([\d.]+)", out)]
@@ -94,12 +109,24 @@ def trailing_freeze(path, duration):
     return None
 
 
-def content_box(path, info):
-    """The area that isn't baked-in black bars, as (w, h, x, y), or None when
-    there are no bars worth removing. Looks at every 10th frame across the
-    whole clip, so one dark scene can't trick it into over-cropping."""
+def mean_volume(path, start, end):
+    """Mean loudness (dB) of [start, end], or None if there's no audio."""
     out = _ffmpeg_log([
-        "-i", str(path), "-an",
+        "-ss", f"{start:.3f}", "-t", f"{max(end - start, 0.1):.3f}", "-i", str(path),
+        "-vn", "-af", "volumedetect",
+    ])
+    m = re.search(r"mean_volume: (-?[\d.]+|-inf) dB", out)
+    if not m:
+        return None
+    return -math.inf if m.group(1) == "-inf" else float(m.group(1))
+
+
+def content_box(path, info, start, end):
+    """The area of the KEPT part that isn't baked-in black bars, as
+    (w, h, x, y), or None when there are no bars worth removing. Looks at
+    every 10th frame, so one dark scene can't trick it into over-cropping."""
+    out = _ffmpeg_log([
+        "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(path), "-an",
         "-vf", "select='not(mod(n,10))',cropdetect=limit=22:round=2:reset=0",
     ])
     boxes = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
@@ -107,10 +134,13 @@ def content_box(path, info):
         return None
     W, H = info["width"], info["height"]
     w, h, x, y = (int(v) for v in boxes[-1])
-    # Ignore tiny trims (compression noise at the edges) and nonsense boxes.
-    if w < W * 0.3 or h < H * 0.3:
-        return None
-    if w >= W * 0.94 and h >= H * 0.94:
+    barred_w, barred_h = w < W * 0.94, h < H * 0.94
+    if not (barred_w or barred_h):
+        return None  # only compression noise at the edges
+    # Bars run along one axis; the other must be (nearly) full size. A 2.39:1
+    # movie clip letterboxed in 9:16 keeps under a quarter of the height, so
+    # the barred axis may go as low as 15%.
+    if (barred_w and barred_h) or min(w / W, h / H) < 0.15:
         return None
     # Real letterbox/pillarbox bars are the same size on both sides. A dark
     # sky or a black wall is one-sided, so don't crop those.
@@ -133,21 +163,19 @@ def ocr_at(path, t, workdir):
     return text.lower()
 
 
-def _squash(text):
-    return re.sub(r"[^a-z0-9]", "", text.lower())
-
-
 def outro_markers(text, author):
-    found = {w for w in OUTRO_WORDS if w in text}
-    handle = _squash(author or "")
-    if len(handle) >= 4 and handle in _squash(text):
-        found.add("@" + author)
+    found = set(OUTRO_WORDS.findall(text))
+    handle = (author or "").lower()
+    # The handle only counts written as @handle, so a short name can't match
+    # ordinary words.
+    if len(handle) >= 3 and re.search(r"@\s?" + re.escape(handle) + r"(?![a-z0-9_.])", text):
+        found.add("@" + handle)
     return found
 
 
 def loudness(path, start, end):
-    """First loudnorm pass: measure the kept segment so the second pass can
-    apply one linear gain (no pumping on music)."""
+    """Measure the kept segment (EBU R128) for one linear gain. Returns
+    the loudnorm measurement dict, or None for silence / no audio."""
     out = _ffmpeg_log([
         "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(path), "-vn",
         "-af", "loudnorm=I=-14:TP=-1.5:LRA=20:print_format=json",
@@ -155,10 +183,11 @@ def loudness(path, start, end):
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", out)
     if not m:
         return None
-    data = json.loads(m.group(0))
     try:
+        data = json.loads(m.group(0))
         if float(data["input_i"]) < -70:  # digital silence - nothing to level
             return None
+        float(data["input_tp"])
     except (KeyError, ValueError):
         return None
     return data
@@ -170,44 +199,63 @@ def loudness(path, start, end):
 def find_outro(path, info, author, cfg, workdir):
     """Return (cut_at_seconds, reason, watermarks_seen_mid_video)."""
     v = cfg["video"]
-    duration = info["duration"]
+    duration = info["video_duration"]
     tail_start = max(duration - float(v.get("outro_max_seconds", 8)), MIN_SECONDS)
 
     have_ocr = shutil.which("tesseract") is not None
-    # Anything already on screen mid-video is a watermark or caption, not an
-    # end card - sample a few points and ignore those words later.
+    # Anything on screen in the body of the clip is a watermark or caption,
+    # not an end card. Sample it widely so a bouncing/fading watermark that
+    # OCR misses on some frames is still caught on others.
     baseline, mid_text = set(), ""
     if have_ocr:
-        for frac in (0.25, 0.5, 0.75):
-            t = duration * frac
-            if t < tail_start or tail_start >= duration - 0.5:
-                text = ocr_at(path, t, workdir)
-                mid_text += " " + text
-                baseline |= outro_markers(text, author)
-    watermarks = sorted(m for m in FOREIGN_MARKS if m in mid_text)
+        body_end = max(min(tail_start, duration - 3), duration * 0.3)
+        for i in range(8):
+            t = duration * 0.05 + (body_end - duration * 0.05) * i / 7
+            text = ocr_at(path, t, workdir)
+            mid_text += " " + text
+            baseline |= outro_markers(text, author)
+    watermarks = sorted(set(FOREIGN_MARKS.findall(mid_text)))
 
     if tail_start >= duration - 0.5:
         return None, "clip too short to have an outro", watermarks
 
     cuts = [c for c in scene_cuts(path) if tail_start <= c < duration - 0.3]
-    freeze = trailing_freeze(path, duration)
+    bounds = cuts + [duration]
 
-    # A hard cut in the tail whose next shot says "follow"/"@creator" etc.
+    def card_hits(a, b):
+        """Outro markers on a segment, probing two frames inside it."""
+        hits = set()
+        for frac in (0.3, 0.75):
+            hits |= outro_markers(ocr_at(path, a + (b - a) * frac, workdir), author)
+        return hits - baseline
+
+    # A hard cut in the tail whose next shot says "follow"/"@creator" etc. -
+    # but only if what comes after it is card-like too, allowing at most
+    # 1.5s of text-free tail (a logo sting). Otherwise the hit was a caption
+    # in the middle of real content, not an end card.
     if have_ocr:
         for i, cut in enumerate(cuts):
-            seg_end = cuts[i + 1] if i + 1 < len(cuts) else duration
-            probe_t = min(cut + 0.4, (cut + seg_end) / 2)
-            hits = outro_markers(ocr_at(path, probe_t, workdir), author) - baseline
-            if hits:
-                return cut, f"end card at {cut:.1f}s ({', '.join(sorted(hits))})", watermarks
+            hits = card_hits(cut, bounds[i + 1])
+            if not hits:
+                continue
+            later = zip(bounds[i + 1:-1], bounds[i + 2:])
+            plain = sum(b - a for a, b in later if not card_hits(a, b))
+            if plain <= 1.5:
+                return cut, f"end card from {cut:.1f}s ({', '.join(sorted(hits))})", watermarks
 
-    # A still frame sitting on the end - a logo slate or a held last frame.
-    # Cutting a still costs nothing even when it isn't an outro.
+    # A still frame on the end. Only an outro if nothing is being said or
+    # played over it - a reaction image or a punchline still with audio is
+    # content.
+    freeze = trailing_freeze(path, duration)
     if freeze is not None and freeze >= tail_start and duration - freeze >= 1.0:
-        # If a scene cut lands just before the still, the card starts there.
         lead_in = [c for c in cuts if freeze - 1.0 <= c <= freeze]
         cut = lead_in[0] if lead_in else freeze
-        return cut, f"still frame from {cut:.1f}s to the end", watermarks
+        volume = mean_volume(path, cut, duration) if info["has_audio"] else None
+        text_hits = card_hits(cut, duration) if have_ocr else set()
+        if volume is None or volume <= SILENT_DB or text_hits:
+            why = ", ".join(sorted(text_hits)) or "silent"
+            return cut, f"still frame from {cut:.1f}s to the end ({why})", watermarks
+        return None, f"still frame at the end kept - audio plays over it ({volume:.0f} dB)", watermarks
 
     note = "" if have_ocr else " (tesseract missing, text check skipped)"
     return None, "no outro found" + note, watermarks
@@ -279,22 +327,33 @@ def output_fps(info):
 
 
 def audio_filter(measured):
+    """One fixed gain to -14 LUFS, capped so peaks stay under -1.5 dBTP.
+    Truly linear (loudnorm's own 'linear' mode quietly falls back to dynamic
+    gain-riding for most speech), so music never pumps."""
     if not measured:
         return "aresample=48000"
-    return (
-        "loudnorm=I=-14:TP=-1.5:LRA=20"
-        f":measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
-        f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
-        f":offset={measured['target_offset']}:linear=true,aresample=48000"
-    )
+    gain = min(-14.0 - float(measured["input_i"]), -1.5 - float(measured["input_tp"]))
+    gain = max(min(gain, 20.0), -30.0)
+    return f"volume={gain:.2f}dB,aresample=48000"
 
 
-def render(src, dest, info, start, end, cfg, box=None, measured=None):
+def video_bitrate_cap(seconds):
+    """Keep the file under Instagram's 300 MB whatever the length: at most
+    15 Mbit/s, less for long clips (90% of the budget, minus audio)."""
+    budget = 0.9 * MAX_BYTES * 8 / max(seconds, 1) - 128_000
+    return int(max(min(15_000_000, budget), 1_000_000))
+
+
+def render(src, dest, info, start, end, cfg, box=None, measured=None, crf_bump=0):
     v = cfg["video"]
     fps = output_fps(info)
+    maxrate = video_bitrate_cap(end - start)
+    # Whole milliseconds, rounded DOWN: ffmpeg keeps a frame whose time is
+    # below start+t, so rounding up can let the first end-card frame through.
+    seconds = math.floor((end - start) * 1000) / 1000
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(src),
+        "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}", "-i", str(src),
     ]
     if not info["has_audio"]:
         # A reel with no audio track at all gets a silent one; Instagram is
@@ -310,11 +369,11 @@ def render(src, dest, info, start, end, cfg, box=None, measured=None):
         cmd += ["-map", "1:a:0", "-shortest"]
 
     cmd += [
-        "-c:v", "libx264", "-preset", "slow", "-crf", str(v.get("crf", 18)),
+        "-c:v", "libx264", "-preset", "slow", "-crf", str(int(v.get("crf", 18)) + crf_bump),
         "-profile:v", "high", "-pix_fmt", "yuv420p",
         "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
         "-r", str(fps), "-g", str(fps * 2),
-        "-maxrate", "15M", "-bufsize", "30M",
+        "-maxrate", str(maxrate), "-bufsize", str(maxrate * 2),
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", "-use_editlist", "0",
         str(dest),
@@ -326,12 +385,17 @@ def render(src, dest, info, start, end, cfg, box=None, measured=None):
 
 
 def make_post_video(src, dest, cfg, author):
-    """Edit `src` into `dest`. Returns a dict describing what was done."""
+    """Edit `src` into `dest`. Returns a dict describing what was done.
+    Raises EditError when the reel can't be made postable at all."""
     v = cfg["video"]
     info = probe(src)
-    duration = info["duration"]
+    duration = info["video_duration"]
     log(f"    source: {info['width']}x{info['height']} @ {info['fps']:.0f}fps, {duration:.1f}s"
         + ("" if info["has_audio"] else ", NO AUDIO TRACK"))
+    if duration < MIN_SECONDS - 0.05:
+        raise EditError(f"source is only {duration:.1f}s - Instagram needs at least {MIN_SECONDS}s")
+    if duration > MAX_SECONDS + float(v.get("outro_max_seconds", 8)):
+        raise EditError(f"source is {duration / 60:.0f} min - Instagram reels max out at 15 min")
 
     start = min(float(v.get("trim_start", 0)), duration)
     end = duration - float(v.get("trim_end", 0))
@@ -341,7 +405,8 @@ def make_post_video(src, dest, cfg, author):
         with tempfile.TemporaryDirectory() as tmp:
             cut, outro_note, watermarks = find_outro(src, info, author, cfg, pathlib.Path(tmp))
         if cut is not None:
-            end = min(end, cut)
+            # Back off half a frame so the card's first frame can't sneak in.
+            end = min(end, cut - 0.5 / info["fps"])
     log(f"    outro: {outro_note}")
     if watermarks:
         log(f"    warning: other-app watermark on screen ({', '.join(watermarks)}) - "
@@ -351,8 +416,9 @@ def make_post_video(src, dest, cfg, author):
         # Never let trimming wreck a short clip; fall back to the full length.
         log(f"    trim would leave {end - start:.1f}s - keeping the whole clip instead")
         start, end = 0.0, duration
+    end = min(end, start + MAX_SECONDS)
 
-    box = content_box(src, info) if v.get("remove_bars", True) else None
+    box = content_box(src, info, start, end) if v.get("remove_bars", True) else None
     if box:
         log(f"    removing black bars: keeping {box[0]}x{box[1]} of {info['width']}x{info['height']}")
 
@@ -361,18 +427,21 @@ def make_post_video(src, dest, cfg, author):
         measured = loudness(src, start, end)
 
     render(src, dest, info, start, end, cfg, box, measured)
+    if dest.stat().st_size > MAX_BYTES:
+        log("    over 300 MB - re-encoding at lower quality")
+        render(src, dest, info, start, end, cfg, box, measured, crf_bump=5)
 
     out = probe(dest)
     size = dest.stat().st_size
     log(f"    edited: {out['duration']:.1f}s, {size / 1_000_000:.1f} MB")
-    if not MIN_SECONDS <= out["duration"] <= MAX_SECONDS:
-        raise RuntimeError(f"edited clip is {out['duration']:.0f}s, outside Instagram's 3s-15min limit")
+    if not MIN_SECONDS - 0.05 <= out["duration"] <= MAX_SECONDS + 1:
+        raise EditError(f"edited clip is {out['duration']:.1f}s, outside Instagram's 3s-15min limit")
     if size > MAX_BYTES:
-        raise RuntimeError(f"edited clip is {size / 1_000_000:.0f} MB, over Instagram's 300 MB limit")
+        raise EditError(f"edited clip is {size / 1_000_000:.0f} MB, over Instagram's 300 MB limit")
 
     return {
         "source_seconds": round(duration, 2),
-        "kept": [round(start, 2), round(end, 2)],
+        "kept": [round(start, 3), round(end, 3)],
         "outro": outro_note,
         "bars_removed": bool(box),
         "has_audio": info["has_audio"],
@@ -385,23 +454,28 @@ def contact_sheet(original, edited, dest, kept):
     """A two-row strip of frames, original on top, edited below, sampled at the
     same moments (incl. the tail) - for eyeballing an edit without downloading
     the whole video."""
-    o, e = probe(original)["duration"], probe(edited)["duration"]
-    start, end = kept
-    o_times = [o * 0.1, o * 0.5, max(o - 3, 0), max(o - 1.5, 0), max(o - 0.2, 0)]
-    e_times = [min(max(t - start, 0), e - 0.1) for t in o_times[:2]]
-    e_times += [max(e - 3, 0), max(e - 1.5, 0), max(e - 0.2, 0)]
+    o_info, e_info = probe(original), probe(edited)
+    o = o_info["video_duration"] - 1.5 / o_info["fps"]
+    e = e_info["video_duration"] - 1.5 / e_info["fps"]
+    start, _ = kept
+    o_times = [o * 0.1, o * 0.5, max(o - 3, 0), max(o - 1.5, 0), max(o, 0)]
+    e_times = [min(max(t - start, 0), e) for t in o_times[:2]]
+    e_times += [max(e - 3, 0), max(e - 1.5, 0), max(e, 0)]
 
     with tempfile.TemporaryDirectory() as tmp:
         frames = []
         for row, (path, times) in enumerate(((original, o_times), (edited, e_times))):
             for i, t in enumerate(times):
                 f = pathlib.Path(tmp) / f"{row}-{i}.png"
-                run([
-                    "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t:.2f}", "-i", str(path),
-                    "-frames:v", "1", "-vf",
-                    "scale=270:480:force_original_aspect_ratio=decrease,"
-                    "pad=270:480:(ow-iw)/2:(oh-ih)/2", str(f),
-                ])
+                for attempt_t in (t, max(t - 0.5, 0), 0):
+                    run([
+                        "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{attempt_t:.2f}",
+                        "-i", str(path), "-frames:v", "1", "-vf",
+                        "scale=270:480:force_original_aspect_ratio=decrease,"
+                        "pad=270:480:(ow-iw)/2:(oh-ih)/2", str(f),
+                    ], check=False)
+                    if f.exists():
+                        break
                 frames.append(f)
         inputs = [arg for f in frames for arg in ("-i", str(f))]
         run([

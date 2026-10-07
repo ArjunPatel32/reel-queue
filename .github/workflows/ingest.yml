@@ -24,29 +24,43 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      # The branch tip, not the commit from when this run was triggered -
+      # a run that waited in a queue would otherwise act on stale state.
       - uses: actions/checkout@v5
-
-      - uses: ./.github/actions/setup
         with:
-          media-tools: "true"
+          ref: ${{ github.ref_name }}
+
+      # Python only first: the share is saved and pushed within a minute, so
+      # it survives even if the slow ffmpeg install below fails.
+      - uses: ./.github/actions/setup
 
       - name: Add to queue
         id: enqueue
         run: python scripts/enqueue.py --url "${URL}"
         env:
           URL: ${{ github.event.client_payload.url || inputs.url }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Save the share
+        run: |
+          python scripts/commit.py "ingest - queued ${{ steps.enqueue.outputs.stem || 'duplicate share' }}"
+
+      - if: steps.enqueue.outputs.stem != ''
+        uses: ./.github/actions/setup
+        with:
+          media-tools: "true"
 
       # Failure here is fine - retry.yml keeps trying every few hours, and the
       # reel isn't needed until its posting day.
       - name: Try downloading now
-        if: steps.enqueue.outputs.shortcode != ''
+        if: steps.enqueue.outputs.stem != ''
         continue-on-error: true
-        run: python scripts/download.py --only "${{ steps.enqueue.outputs.shortcode }}"
+        run: python scripts/download.py --only "${{ steps.enqueue.outputs.stem }}"
         env:
           IG_COOKIES: ${{ secrets.IG_COOKIES }}
           GH_TOKEN: ${{ github.token }}
 
-      - name: Save queue state
-        if: always()
+      - name: Save download result
+        if: always() && steps.enqueue.outputs.stem != ''
         run: |
-          python scripts/commit.py "ingest - queue reel ${{ steps.enqueue.outputs.shortcode }}"
+          python scripts/commit.py "ingest - downloaded ${{ steps.enqueue.outputs.stem }}"

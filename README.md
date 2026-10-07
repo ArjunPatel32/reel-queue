@@ -64,7 +64,8 @@ Share a reel to **Queue Reel**. That's it.
 - **Don't want one to post:** delete its file from `ready/`, or add
   `"skip": true` to it.
 - **Post something right now:** **Actions → Post reels → Run workflow →
-  post_now**.
+  post_now**. If that run shows *cancelled*, an hourly run was busy at the
+  same moment — just run it again.
 
 ## Worth knowing
 

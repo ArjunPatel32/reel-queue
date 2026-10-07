@@ -6,8 +6,10 @@ run's summary page.
 """
 
 import argparse
+import json
 import os
 import pathlib
+import subprocess
 import tempfile
 
 from common import build_caption, fail, load_config, log
@@ -16,6 +18,22 @@ from edit import contact_sheet
 from enqueue import SHARE_LINK, resolve_share_link, shortcode_of
 
 TAG = "preview"
+# Keep the newest previews (two files each); older ones are deleted so the
+# release doesn't grow forever (a release holds at most 1000 files).
+KEEP_FILES = 20
+
+
+def prune_previews():
+    proc = subprocess.run(
+        ["gh", "release", "view", TAG, "--json", "assets"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return
+    assets = sorted(json.loads(proc.stdout)["assets"], key=lambda a: a["createdAt"])
+    for asset in assets[:-KEEP_FILES]:
+        subprocess.run(["gh", "release", "delete-asset", TAG, asset["name"], "--yes"],
+                       capture_output=True, text=True)
 
 
 def main():
@@ -38,11 +56,18 @@ def main():
     )
     author = meta["author"]
 
+    # The video goes up first; a failure drawing the frame strip mustn't
+    # throw away a finished edit.
+    staged = final.parent / f"{code}.mp4"
+    video_url = upload(final, staged.name, tag=TAG, title="Edit previews")
     sheet = workdir / f"{code}-compare.jpg"
-    contact_sheet(raw, final, sheet, edit_info["kept"])
-
-    video_url = upload(final, f"{code}.mp4", tag=TAG, title="Edit previews")
-    sheet_url = upload(sheet, f"{code}-compare.jpg", tag=TAG, title="Edit previews")
+    try:
+        contact_sheet(raw, staged, sheet, edit_info["kept"])
+        sheet_url = upload(sheet, sheet.name, tag=TAG, title="Edit previews")
+    except Exception as exc:
+        log(f"(couldn't draw the before/after strip: {str(exc)[-200:]})")
+        sheet_url = None
+    prune_previews()
     caption = build_caption(cfg, author)
 
     credit = f"**@{author}**"
@@ -56,8 +81,9 @@ def main():
         f"- Black bars removed: {'yes' if edit_info['bars_removed'] else 'no'}",
         f"- Caption: `{caption}`",
         f"- [Edited video]({video_url})",
-        f"- [Before/after frames]({sheet_url}) (top: original, bottom: edited)",
     ]
+    if sheet_url:
+        lines.append(f"- [Before/after frames]({sheet_url}) (top: original, bottom: edited)")
     if not edit_info["has_audio"]:
         lines.append("- ⚠️ No audio track - the queue would park this one instead of posting it")
     if edit_info["foreign_watermark"]:
