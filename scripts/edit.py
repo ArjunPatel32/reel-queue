@@ -83,19 +83,26 @@ def _ffmpeg_log(args):
     return proc.stderr
 
 
-def scene_cuts(path, threshold=0.3):
+def _analysis_crop(box):
+    """Look only at the picture inside letterbox bars, so the bars (which
+    never change) don't water down scene-change scores."""
+    return "crop={}:{}:{}:{},".format(*box) if box else ""
+
+
+def scene_cuts(path, threshold=0.3, box=None):
     """Timestamps of hard cuts. Run on a small copy of the frames for speed."""
     out = _ffmpeg_log([
         "-i", str(path), "-an",
-        "-vf", f"scale=320:-2,select='gt(scene,{threshold})',showinfo",
+        "-vf", f"{_analysis_crop(box)}scale=320:-2,select='gt(scene,{threshold})',showinfo",
     ])
     return [float(t) for t in re.findall(r"pts_time:([\d.]+)", out)]
 
 
-def trailing_freeze(path, duration):
+def trailing_freeze(path, duration, box=None):
     """Start of a still frame that runs to the end of the clip, if any."""
     out = _ffmpeg_log([
-        "-i", str(path), "-an", "-vf", "scale=320:-2,freezedetect=n=0.001:d=0.7",
+        "-i", str(path), "-an",
+        "-vf", f"{_analysis_crop(box)}scale=320:-2,freezedetect=n=0.001:d=0.7",
     ])
     starts = [float(t) for t in re.findall(r"freeze_start: ([\d.]+)", out)]
     ends = [float(t) for t in re.findall(r"freeze_end: ([\d.]+)", out)]
@@ -150,14 +157,26 @@ def content_box(path, info, start, end):
 
 
 def ocr_at(path, t, workdir):
-    """OCR one frame. Returns lowercase text, or '' if nothing readable."""
+    """OCR one frame. Returns lowercase text, or '' if nothing readable.
+    Reads it twice: as plain greyscale (dark-on-light, high-contrast cards)
+    and with only near-white pixels kept, turned black on white - the usual
+    white overlay text (captions, watermarks, end cards) that tesseract
+    can't pick out of a busy background otherwise."""
     frame = workdir / f"ocr-{t:.2f}.png"
+    white = workdir / f"ocr-{t:.2f}-white.png"
     try:
         run([
             "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t:.2f}", "-i", str(path),
             "-frames:v", "1", "-vf", "scale=720:-2,format=gray", str(frame),
         ])
-        text = run(["tesseract", str(frame), "-", "--psm", "11"], check=False)
+        run([
+            "ffmpeg", "-y", "-loglevel", "error", "-i", str(frame),
+            "-vf", "lut=c0='if(gt(val,180),0,255)'", str(white),
+        ])
+        text = " ".join(
+            run(["tesseract", str(img), "-", "--psm", "11"], check=False)
+            for img in (frame, white)
+        )
     except Exception:
         return ""
     return text.lower()
@@ -196,7 +215,7 @@ def loudness(path, start, end):
 # ------------------------------------------------------------ outro finding
 
 
-def find_outro(path, info, author, cfg, workdir):
+def find_outro(path, info, author, cfg, workdir, box=None):
     """Return (cut_at_seconds, reason, watermarks_seen_mid_video)."""
     v = cfg["video"]
     duration = info["video_duration"]
@@ -219,7 +238,7 @@ def find_outro(path, info, author, cfg, workdir):
     if tail_start >= duration - 0.5:
         return None, "clip too short to have an outro", watermarks
 
-    cuts = [c for c in scene_cuts(path) if tail_start <= c < duration - 0.3]
+    cuts = [c for c in scene_cuts(path, box=box) if tail_start <= c < duration - 0.3]
     bounds = cuts + [duration]
 
     def card_hits(a, b):
@@ -246,7 +265,7 @@ def find_outro(path, info, author, cfg, workdir):
     # A still frame on the end. Only an outro if nothing is being said or
     # played over it - a reaction image or a punchline still with audio is
     # content.
-    freeze = trailing_freeze(path, duration)
+    freeze = trailing_freeze(path, duration, box)
     if freeze is not None and freeze >= tail_start and duration - freeze >= 1.0:
         lead_in = [c for c in cuts if freeze - 1.0 <= c <= freeze]
         cut = lead_in[0] if lead_in else freeze
@@ -400,10 +419,15 @@ def make_post_video(src, dest, cfg, author):
     start = min(float(v.get("trim_start", 0)), duration)
     end = duration - float(v.get("trim_end", 0))
 
+    remove_bars = v.get("remove_bars", True)
     outro_note, watermarks = "outro removal off", []
     if v.get("remove_outro", True):
+        # Bars over the whole clip, only to focus the outro analysis; the
+        # bars actually removed are measured on the kept part below.
+        analysis_box = content_box(src, info, 0, duration) if remove_bars else None
         with tempfile.TemporaryDirectory() as tmp:
-            cut, outro_note, watermarks = find_outro(src, info, author, cfg, pathlib.Path(tmp))
+            cut, outro_note, watermarks = find_outro(
+                src, info, author, cfg, pathlib.Path(tmp), analysis_box)
         if cut is not None:
             # Back off half a frame so the card's first frame can't sneak in.
             end = min(end, cut - 0.5 / info["fps"])
@@ -418,7 +442,7 @@ def make_post_video(src, dest, cfg, author):
         start, end = 0.0, duration
     end = min(end, start + MAX_SECONDS)
 
-    box = content_box(src, info, start, end) if v.get("remove_bars", True) else None
+    box = content_box(src, info, start, end) if remove_bars else None
     if box:
         log(f"    removing black bars: keeping {box[0]}x{box[1]} of {info['width']}x{info['height']}")
 

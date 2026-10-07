@@ -324,7 +324,8 @@ def test_edit(cfg):
     o = probe(out)
     check("output is 1080x1920", (o["width"], o["height"]) == (1080, 1920), o)
     check("end card cut (kept ~8s of 11s)", 7.5 <= o["duration"] <= 8.1, info)
-    check("cut reason names the card", "end card" in info["outro"], info["outro"])
+    check("cut reason is the card's text", "follow" in info["outro"], info["outro"])
+    check("card found by its scene cut through the letterbox", "end card" in info["outro"], info["outro"])
     check("output has audio", o["has_audio"])
     check("letterbox bars removed", info["bars_removed"], info)
     sheet = tmp / "sheet.jpg"

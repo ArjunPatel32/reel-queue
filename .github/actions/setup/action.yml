@@ -37,12 +37,14 @@ runs:
       run: echo "version=${ImageOS:-ubuntu}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
 
     - if: inputs.media-tools == 'true'
-      uses: actions/cache@v5
+      id: debs
+      uses: actions/cache/restore@v5
       with:
         path: ~/apt-debs
         key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v1
 
     - if: inputs.media-tools == 'true'
+      id: install
       shell: bash
       run: |
         # Rebuilding the man-page index after an install also stalls for
@@ -61,8 +63,19 @@ runs:
             -o Acquire::Retries=5 -o APT::Keep-Downloaded-Packages=true $pkgs \
             | grep -vE "^(Selecting|Preparing|Unpacking|Setting up|Processing)" || true
           rm -rf "$HOME/apt-debs" && mkdir -p "$HOME/apt-debs"
-          cp /var/cache/apt/archives/*.deb "$HOME/apt-debs/" 2>/dev/null \
-            || echo "(apt kept no .deb files - nothing to cache)"
+          if cp /var/cache/apt/archives/*.deb "$HOME/apt-debs/" 2>/dev/null; then
+            echo "save=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "(apt kept no .deb files - nothing to cache)"
+          fi
         fi
         ffmpeg -version | head -1
         tesseract --version | head -1
+
+    # Saved straight away rather than at the end of the job, so the cache
+    # exists even if a later step in this job fails.
+    - if: inputs.media-tools == 'true' && steps.install.outputs.save == 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ~/apt-debs
+        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v1
