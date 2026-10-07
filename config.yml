@@ -1,23 +1,54 @@
 # Your local timezone. Everything below is in this timezone.
 timezone: America/Los_Angeles
 
-# The daily window reels get posted in.
+# Each day's posts are spread across this window (one random time in each
+# equal slice of it), always oldest reel first.
 window:
-  start: "09:30"
-  end: "10:00"
+  start: "10:00"
+  end: "20:00"
 
-# Each morning a random number in this range is chosen (inclusive).
+# Each day a random number in this range is chosen (inclusive).
 posts_per_day:
   min: 1
   max: 3
 
-# {author} is the original poster's @username.
-caption_template: "@{author}"
+# While MORE than `threshold` reels are waiting, use this range instead, until
+# the backlog is back down to `threshold`.
+backlog:
+  threshold: 10
+  min: 2
+  max: 4
+
+# The caption. {author} is the original poster's @username.
+caption_template: "🎥 @{author}"
+# Optional line added under the credit, e.g. "#funny #memes". "" for none.
+hashtags: ""
 
 video:
-  # Trim this fraction off the edges (0.97 = shave ~3%, kills the original
-  # watermark border and makes the file non-identical to the source).
-  crop: 0.97
   width: 1080
   height: 1920
-  crf: 23
+  # Shave this fraction off every edge (0.97 = ~3%). Trims stray borders and
+  # edge watermarks. 1.0 = off.
+  crop: 0.97
+  # Clips that aren't 9:16: "blur" puts them over a blurred copy of
+  # themselves, "black" uses plain bars.
+  background: blur
+
+  # Always cut this many seconds off the start / end. 0 = off.
+  trim_start: 0
+  trim_end: 0
+  # Detect and cut the creator's outro (follow-me card, logo slate, TikTok
+  # end screen, a still frame held at the end), looking at most this far
+  # back from the end.
+  remove_outro: true
+  outro_max_seconds: 8
+
+  # Picture polish. brightness 0 / contrast 1 / saturation 1 / sharpen 0 = untouched.
+  brightness: 0.03
+  contrast: 1.06
+  saturation: 1.18
+  sharpen: 0.5
+  # Even out volume so every reel plays at the same loudness.
+  loudnorm: true
+  # Encode quality, lower = better/bigger. 18 is visually lossless.
+  crf: 18

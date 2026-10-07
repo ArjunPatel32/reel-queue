@@ -1,0 +1,39 @@
+# Shared setup for every workflow: Python deps, plus ffmpeg/tesseract when
+# the job edits video.
+name: Set up reel-queue
+description: Install Python and the tools the scripts need
+
+inputs:
+  media-tools:
+    description: Also install ffmpeg and tesseract (needed for downloading/editing)
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+        cache: pip
+
+    # yt-dlp comes from the pre-release channel because Instagram breaks the
+    # extractor often and fixes land there first. curl-cffi lets it impersonate
+    # a browser, which logged-out Instagram downloads require.
+    - shell: bash
+      run: |
+        pip install -r requirements.txt
+        pip install -U --pre "yt-dlp[default,curl-cffi]"
+        yt-dlp --version
+
+    - if: inputs.media-tools == 'true'
+      shell: bash
+      run: |
+        missing=""
+        command -v ffmpeg >/dev/null || missing="$missing ffmpeg"
+        command -v tesseract >/dev/null || missing="$missing tesseract-ocr"
+        if [ -n "$missing" ]; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends $missing
+        fi
+        ffmpeg -version | head -1
+        tesseract --version | head -1

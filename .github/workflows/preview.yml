@@ -1,0 +1,32 @@
+# Try the editing on one reel without queueing or posting it. Run it from the
+# Actions tab (or the GitHub app): Preview edit -> Run workflow -> paste a URL.
+# The result's links appear on the run's summary page.
+name: Preview edit
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Instagram reel URL
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup
+        with:
+          media-tools: "true"
+
+      - name: Download and edit
+        run: python scripts/preview.py --url "${URL}"
+        env:
+          URL: ${{ inputs.url }}
+          IG_COOKIES: ${{ secrets.IG_COOKIES }}
+          GH_TOKEN: ${{ github.token }}

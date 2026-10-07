@@ -1,13 +1,13 @@
-"""Download every pending reel, re-encode it, and park it in a GitHub Release.
+"""Download every pending reel, edit it, and park it in a GitHub Release.
 
 Runs on ingest and again every few hours on a retry cron. Instagram blocks
 datacenter IPs unpredictably, so failures here are expected and harmless -
 the item stays in queue/ and gets retried until it works.
 
-A successful item moves queue/ -> ready/ with a public asset URL attached,
-which is what Meta's servers fetch at publish time.
+A successful item moves queue/ -> ready/ with a public asset URL attached.
 """
 
+import argparse
 import json
 import os
 import pathlib
@@ -17,7 +17,6 @@ import tempfile
 from common import (
     QUEUE,
     READY,
-    ROOT,
     list_items,
     load_config,
     log,
@@ -25,13 +24,14 @@ from common import (
     run,
     write_item,
 )
+from edit import make_post_video
 
 RELEASE_TAG = "media"
 MAX_ATTEMPTS = 40
 
 
 def write_cookies():
-    """yt-dlp needs a logged-in session for most reels. Use a burner account."""
+    """Optional logged-in session for yt-dlp. Use a burner account."""
     raw = os.environ.get("IG_COOKIES", "").strip()
     if not raw:
         return None
@@ -40,108 +40,91 @@ def write_cookies():
     return str(path)
 
 
-def probe(url, cookies):
-    cmd = ["yt-dlp", "-J", "--no-warnings", "--no-playlist"]
-    if cookies:
-        cmd += ["--cookies", cookies]
-    cmd.append(url)
-    return json.loads(run(cmd))
-
-
 def author_of(info):
-    for key in ("uploader_id", "uploader", "channel_id", "channel"):
-        value = (info.get(key) or "").strip().lstrip("@")
-        if value and " " not in value:
-            return value
+    """The original poster's @handle. yt-dlp puts the Instagram username in
+    `channel`; `uploader_id` is the numeric account id and `uploader` is the
+    display name, so neither of those can go in a caption."""
+    handle = (info.get("channel") or "").strip().lstrip("@")
+    if handle and " " not in handle:
+        return handle
+    for key in ("channel_url", "uploader_url"):
+        url = (info.get(key) or "").rstrip("/")
+        if "instagram.com/" in url:
+            tail = url.rsplit("/", 1)[-1]
+            if tail and not tail.isdigit():
+                return tail
     return None
 
 
-def fetch(url, cookies, dest):
+def fetch(url, cookies, workdir, code):
+    """One yt-dlp call for both the video and its metadata, so Instagram only
+    sees one round of requests per reel."""
     cmd = [
         "yt-dlp",
         "--no-warnings",
         "--no-playlist",
+        "--write-info-json",
         "-f", "bv*+ba/b",
         "--merge-output-format", "mp4",
-        "-o", str(dest),
+        "-o", str(workdir / f"{code}.%(ext)s"),
     ]
     if cookies:
         cmd += ["--cookies", cookies]
     cmd.append(url)
     run(cmd)
+    info = json.loads((workdir / f"{code}.info.json").read_text(encoding="utf-8"))
+    return workdir / f"{code}.mp4", info
 
 
-def reencode(src, dest, cfg):
-    v = cfg["video"]
-    crop, w, h = v["crop"], v["width"], v["height"]
-    vf = (
-        f"crop=iw*{crop}:ih*{crop},"
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
-    )
-    run([
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(src),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "medium", "-crf", str(v["crf"]),
-        "-pix_fmt", "yuv420p", "-r", "30",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        "-movflags", "+faststart",
-        str(dest),
-    ])
+def fetch_and_edit(url, code, cfg, cookies, workdir):
+    """Download + edit one reel. Returns (raw_path, final_path, author, edit_info)."""
+    raw, info = fetch(url, cookies, workdir, code)
+    author = author_of(info)
+    if not author:
+        raise RuntimeError(
+            "could not find the original account's username in yt-dlp's metadata "
+            f"(channel={info.get('channel')!r}, uploader={info.get('uploader')!r})"
+        )
+    log(f"    by @{author}")
+    final = workdir / f"{code}.final.mp4"
+    edit_info = make_post_video(raw, final, cfg, author)
+    return raw, final, author, edit_info
 
 
-def ensure_release():
-    existing = subprocess.run(
-        ["gh", "release", "view", RELEASE_TAG], capture_output=True, text=True
-    )
+def ensure_release(tag, title):
+    existing = subprocess.run(["gh", "release", "view", tag], capture_output=True, text=True)
     if existing.returncode != 0:
         run([
-            "gh", "release", "create", RELEASE_TAG,
-            "--title", "Reel media",
-            "--notes", "Video files staged here so Meta's servers can fetch them.",
+            "gh", "release", "create", tag,
+            "--title", title,
+            "--notes", "Video files staged here by the reel-queue workflows.",
         ])
 
 
-def upload(path, shortcode):
-    ensure_release()
-    asset = f"{shortcode}.mp4"
+def upload(path, asset, tag=RELEASE_TAG, title="Reel media"):
+    ensure_release(tag, title)
     staged = path.parent / asset
     if staged != path:
         path.replace(staged)
-    run(["gh", "release", "upload", RELEASE_TAG, str(staged), "--clobber"])
-    return f"https://github.com/{repo_slug()}/releases/download/{RELEASE_TAG}/{asset}"
+    run(["gh", "release", "upload", tag, str(staged), "--clobber"])
+    return f"https://github.com/{repo_slug()}/releases/download/{tag}/{asset}"
 
 
 def process(item, cfg, cookies, workdir):
     url, code = item["url"], item["shortcode"]
     log(f"--- {code}")
 
-    info = probe(url, cookies)
-    author = author_of(info)
-    if not author:
-        raise RuntimeError("could not determine the original account's username")
-
-    raw = workdir / f"{code}.raw.mp4"
-    final = workdir / f"{code}.final.mp4"
-    fetch(url, cookies, raw)
-    reencode(raw, final, cfg)
-
-    size_mb = final.stat().st_size / 1_000_000
-    duration = float(info.get("duration") or 0)
-    log(f"    @{author}, {duration:.0f}s, {size_mb:.1f} MB")
-    if duration and not (3 <= duration <= 900):
-        raise RuntimeError(f"duration {duration:.0f}s outside Instagram's 3s-15min limit")
-
-    asset_url = upload(final, code)
+    _, final, author, edit_info = fetch_and_edit(url, code, cfg, cookies, workdir)
+    asset_url = upload(final, f"{code}.mp4")
 
     ready = dict(item)
     ready.pop("_path", None)
+    ready.pop("caption", None)
     ready.update({
         "author": author,
-        "caption": cfg["caption_template"].format(author=author),
         "asset_url": asset_url,
-        "duration": duration,
+        "duration": edit_info["seconds"],
+        "edit": edit_info,
         "last_error": None,
     })
     name = pathlib.Path(item["_path"]).name
@@ -151,14 +134,20 @@ def process(item, cfg, cookies, workdir):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", help="just this shortcode (ingest uses this)")
+    args = ap.parse_args()
+
     cfg = load_config()
     cookies = write_cookies()
     if not cookies:
-        log("warning: no IG_COOKIES secret set, most reels will fail to download")
+        log("no IG_COOKIES secret - trying logged-out downloads")
 
-    pending = list_items(QUEUE)
+    pending = [i for i in list_items(QUEUE) if not i.get("gave_up")]
+    if args.only:
+        pending = [i for i in pending if i["shortcode"] == args.only]
     if not pending:
-        log("queue is empty")
+        log("nothing pending")
         return
 
     log(f"{len(pending)} pending")
@@ -173,8 +162,8 @@ def main():
             failures += 1
             attempts = int(item.get("attempts", 0)) + 1
             item["attempts"] = attempts
-            item["last_error"] = str(exc)[:500]
-            log(f"    failed (attempt {attempts}): {str(exc)[:200]}")
+            item["last_error"] = str(exc)[-500:]
+            log(f"    failed (attempt {attempts}): {str(exc)[-400:]}")
             if attempts >= MAX_ATTEMPTS:
                 item["gave_up"] = True
                 log("    giving up on this one, leaving it in queue/ for you to look at")

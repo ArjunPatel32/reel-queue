@@ -12,11 +12,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 QUEUE = ROOT / "queue"
 READY = ROOT / "ready"
 POSTED = ROOT / "posted"
+STATE = ROOT / "state"
+TRACKED = ("queue", "ready", "posted", "state")
 
 
 def load_config():
     with open(ROOT / "config.yml", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def build_caption(cfg, author):
+    caption = cfg["caption_template"].format(author=author)
+    if (cfg.get("hashtags") or "").strip():
+        caption += "\n\n" + cfg["hashtags"].strip()
+    return caption
 
 
 def run(cmd, check=True, capture=True):
@@ -68,9 +77,9 @@ def commit_and_push(message):
     retry and post workflows can't clobber each other's writes."""
     run(["git", "config", "user.name", "reel-queue-bot"], check=False)
     run(["git", "config", "user.email", "bot@users.noreply.github.com"], check=False)
-    run(["git", "add", "-A", "queue", "ready", "posted"], check=False)
+    run(["git", "add", "-A", *TRACKED], check=False)
 
-    status = run(["git", "status", "--porcelain", "queue", "ready", "posted"])
+    status = run(["git", "status", "--porcelain", *TRACKED])
     if not status.strip():
         log("nothing to commit")
         return

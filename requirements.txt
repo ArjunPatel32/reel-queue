@@ -1,3 +1,3 @@
-yt-dlp>=2025.1.1
-requests>=2.31.0
+requests>=2.32.0
 PyYAML>=6.0
+# yt-dlp is installed by .github/actions/setup from the pre-release channel.

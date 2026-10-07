@@ -1,4 +1,9 @@
 # Fired by the iPhone Shortcut via the GitHub repository_dispatch API.
+#
+# No concurrency group on purpose: GitHub keeps only one *pending* run per
+# group and cancels the rest, so sharing three reels in a row would silently
+# drop the middle one. Each run only touches its own reel's files, and
+# commit.py rebases before pushing, so parallel runs don't collide.
 name: Ingest reel
 
 on:
@@ -10,39 +15,37 @@ on:
         description: Instagram reel URL
         required: true
 
-concurrency:
-  group: queue-write
-  cancel-in-progress: false
-
 permissions:
   contents: write
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup
         with:
-          python-version: "3.12"
-          cache: pip
-
-      - run: pip install -r requirements.txt
+          media-tools: "true"
 
       - name: Add to queue
+        id: enqueue
         run: python scripts/enqueue.py --url "${URL}"
         env:
           URL: ${{ github.event.client_payload.url || inputs.url }}
 
-      # Attempted immediately, but failure here is fine - the retry cron will
-      # keep trying, and the reel isn't needed until its posting day.
+      # Failure here is fine - retry.yml keeps trying every few hours, and the
+      # reel isn't needed until its posting day.
       - name: Try downloading now
+        if: steps.enqueue.outputs.shortcode != ''
         continue-on-error: true
-        run: python scripts/download.py
+        run: python scripts/download.py --only "${{ steps.enqueue.outputs.shortcode }}"
         env:
           IG_COOKIES: ${{ secrets.IG_COOKIES }}
           GH_TOKEN: ${{ github.token }}
 
       - name: Save queue state
-        run: python scripts/commit.py "ingest: queue reel"
+        if: always()
+        run: |
+          python scripts/commit.py "ingest - queue reel ${{ steps.enqueue.outputs.shortcode }}"

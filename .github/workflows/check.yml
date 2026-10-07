@@ -1,0 +1,47 @@
+# Runs on every code change: lints the workflow files (a YAML mistake once
+# silently broke ingest for a month) and runs the offline self-test, which
+# includes editing a synthetic clip with a fake outro card.
+name: Check
+
+on:
+  push:
+    paths:
+      - "scripts/**"
+      - ".github/**"
+      - "config.yml"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Lint workflow files
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -color
+
+      - uses: ./.github/actions/setup
+        with:
+          media-tools: "true"
+
+      - name: Fonts for the synthetic test clip
+        run: |
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf \
+            || sudo apt-get install -y -qq fonts-dejavu-core
+
+      - name: Self-test
+        working-directory: scripts
+        run: python selftest.py
+
+      - name: Keep the test's before/after frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-sheet
+          path: ${{ runner.temp }}/selftest-sheet.jpg
+          if-no-files-found: ignore
