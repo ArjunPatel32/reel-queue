@@ -54,14 +54,15 @@ runs:
            && sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb; then
           echo "installed $pkgs from the cache"
         else
-          echo "cache miss - downloading from the Ubuntu mirror"
+          echo "cache miss - installing from the Ubuntu mirror"
           sudo apt-get clean
           sudo apt-get update -qq -o Acquire::Retries=5
-          sudo -E apt-get install -y -qq --no-install-recommends --download-only \
-            -o Acquire::Retries=5 $pkgs
+          sudo -E apt-get install -y -q --no-install-recommends \
+            -o Acquire::Retries=5 -o APT::Keep-Downloaded-Packages=true $pkgs \
+            | grep -vE "^(Selecting|Preparing|Unpacking|Setting up|Processing)" || true
           rm -rf "$HOME/apt-debs" && mkdir -p "$HOME/apt-debs"
-          cp /var/cache/apt/archives/*.deb "$HOME/apt-debs/"
-          sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb
+          cp /var/cache/apt/archives/*.deb "$HOME/apt-debs/" 2>/dev/null \
+            || echo "(apt kept no .deb files - nothing to cache)"
         fi
         ffmpeg -version | head -1
         tesseract --version | head -1
