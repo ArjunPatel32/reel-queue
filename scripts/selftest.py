@@ -16,7 +16,7 @@ import tempfile
 from zoneinfo import ZoneInfo
 
 from common import build_caption, load_config
-from download import author_of
+from download import credited_in, poster_of
 from enqueue import shortcode_of
 import post
 
@@ -46,9 +46,23 @@ def test_urls():
 def test_author():
     # Field layout taken from yt-dlp's Instagram extractor test cases.
     info = {"channel": "naomipq", "uploader_id": "2815873", "uploader": "B E A U T Y  F O R  A S H E S"}
-    check("author uses channel, not numeric id", author_of(info) == "naomipq", author_of(info))
-    check("author none without channel", author_of({"uploader_id": "2815873", "uploader": "Name"}) is None)
-    check("author from channel_url", author_of({"channel_url": "https://www.instagram.com/foo.bar"}) == "foo.bar")
+    check("poster uses channel, not numeric id", poster_of(info) == "naomipq", poster_of(info))
+    check("poster none without channel", poster_of({"uploader_id": "2815873", "uploader": "Name"}) is None)
+
+    credits = {
+        "so good 🔥 credit: @realcreator #funny": "realcreator",
+        "🎥: @some.one": "some.one",
+        "Credits to @abc_def": "abc_def",
+        "via @orig.": "orig",
+        "Reel by @august_thegingercat": "august_thegingercat",
+        "music by @dj_x": None,          # a musician, not the creator
+        "edit by @friend": None,         # bare "by" is not trusted
+        "credit @poster": None,          # crediting yourself isn't a credit
+        "": None,
+    }
+    for text, want in credits.items():
+        got = credited_in(text, "poster")
+        check(f"credit in {text[:30]!r} -> {want}", got == want, got)
 
 
 def test_planner(cfg):
@@ -81,8 +95,9 @@ def test_caption(cfg):
 
 
 def make_clip(path):
-    """8s of moving 16:9 test pattern with a tone, then a 3s black card that
-    says 'Follow @testcreator'."""
+    """8s of moving 16:9 test pattern with a tone, then a 3s card that says
+    'Follow @testcreator' - all letterboxed inside a 9:16 frame with black
+    bars, the way a lot of reposted landscape clips arrive."""
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     card = (
         f"drawtext=fontfile={font}:text='Follow @testcreator':fontsize=90:"
@@ -91,9 +106,10 @@ def make_clip(path):
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=8",
-        "-f", "lavfi", "-i", f"color=c=black:size=1280x720:rate=30:duration=3,{card}",
+        "-f", "lavfi", "-i", f"color=c=0x203040:size=1280x720:rate=30:duration=3,{card}",
         "-f", "lavfi", "-i", "sine=frequency=440:duration=11",
-        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-filter_complex",
+        "[0:v][1:v]concat=n=2:v=1:a=0,scale=1080:608,pad=1080:1920:0:656:black[v]",
         "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-shortest", str(path),
     ], check=True)
@@ -114,6 +130,7 @@ def test_edit(cfg):
     check("outro card cut (kept ~8s of 11s)", 7.5 <= o["duration"] <= 8.6, info)
     check("outro reason names the card", "end card" in info["outro"] or "still" in info["outro"], info["outro"])
     check("output has audio", o["has_audio"])
+    check("letterbox bars detected and removed", info["bars_removed"], info)
 
     sheet = tmp / "sheet.jpg"
     contact_sheet(src, out, sheet, info["kept"])
@@ -131,6 +148,11 @@ def test_edit(cfg):
     ], check=True)
     info = make_post_video(plain, tmp / "plain-out.mp4", cfg, "testcreator")
     check("no-outro clip keeps full length", info["kept"][1] >= 8.9, info)
+    check("full-frame clip not cropped", not info["bars_removed"], info)
+
+    from edit import loudness
+    measured = loudness(plain, 0, 9)
+    check("loudness measured for two-pass levelling", bool(measured and "input_i" in measured), measured)
 
 
 if __name__ == "__main__":

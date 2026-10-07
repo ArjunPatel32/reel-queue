@@ -1,8 +1,9 @@
 # reel-queue
 
 Instagram reel repost pipeline. Share a reel from the iPhone share sheet → it
-queues → 1–3 get auto-posted each morning between 09:30–10:00 Pacific, captioned
-`@originalaccount` for credit. Runs entirely on GitHub Actions, costs nothing.
+queues → gets edited (outro cut, colour polish) → 1–3 a day get auto-posted
+between 10:00–20:00 Pacific, oldest first, captioned
+`🎥 @originalaccount` for credit. Runs entirely on GitHub Actions, costs nothing.
 
 ## Read this first
 
@@ -24,3 +25,7 @@ to pick up. It's kept current — update it whenever a chunk of work finishes.
   GitHub Actions secrets only.
 - Don't re-litigate decisions recorded in `PROGRESS.md` — read the reasoning
   there first.
+- **No Python on Arjun's PC.** Code is verified on GitHub's runners: `check.yml`
+  (actionlint + `scripts/selftest.py`) runs on every push, and the *Preview
+  edit* workflow exercises a real reel without touching the queue. Add a
+  selftest case for any behaviour you change.

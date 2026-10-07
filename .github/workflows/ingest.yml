@@ -1,8 +1,9 @@
-# Fired by the iPhone Shortcut via the GitHub repository_dispatch API.
+# Fired by the iPhone Shortcut (workflow_dispatch with a `url` input; the
+# older repository_dispatch event is still accepted).
 #
-# No concurrency group on purpose: GitHub keeps only one *pending* run per
-# group and cancels the rest, so sharing three reels in a row would silently
-# drop the middle one. Each run only touches its own reel's files, and
+# No concurrency group on purpose: by default GitHub keeps only one *pending*
+# run per group and cancels the rest, so sharing three reels in a row would
+# silently drop the middle one. Each run only touches its own reel's files, and
 # commit.py rebases before pushing, so parallel runs don't collide.
 name: Ingest reel
 
@@ -20,7 +21,7 @@ permissions:
 
 jobs:
   ingest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5

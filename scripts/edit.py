@@ -4,8 +4,9 @@
   2. Find and cut the creator's outro - a "follow me" card, a logo slate, the
      TikTok end screen - so the clip ends on the actual content. Credit lives
      in the caption instead.
-  3. Shave the edges, reframe to 1080x1920, polish colour/sharpness, even out
-     the loudness, and encode to Instagram's preferred format.
+  3. Strip baked-in black bars, reframe to 1080x1920 (blurred fill for clips
+     that aren't 9:16), polish colour/sharpness, level the loudness, and
+     encode to Instagram's Reels spec.
 
 Everything here is plain ffmpeg + tesseract on the GitHub runner. Each step
 logs what it decided, so a bad cut is easy to trace back from the Actions log.
@@ -27,6 +28,10 @@ OUTRO_WORDS = (
     "follow", "subscribe", "link in bio", "for more", "more videos",
     "part 2", "tiktok", "youtube", "thanks for watching",
 )
+# Logos from other apps. Instagram won't recommend reels that carry them, so
+# they get flagged (not removed - painting over a creator's watermark is
+# worse than leaving it).
+FOREIGN_MARKS = ("tiktok", "capcut", "youtube", "snapchat")
 
 # Instagram's publishing API limits for reels.
 MIN_SECONDS, MAX_SECONDS = 3, 900
@@ -89,6 +94,31 @@ def trailing_freeze(path, duration):
     return None
 
 
+def content_box(path, info):
+    """The area that isn't baked-in black bars, as (w, h, x, y), or None when
+    there are no bars worth removing. Looks at every 10th frame across the
+    whole clip, so one dark scene can't trick it into over-cropping."""
+    out = _ffmpeg_log([
+        "-i", str(path), "-an",
+        "-vf", "select='not(mod(n,10))',cropdetect=limit=22:round=2:reset=0",
+    ])
+    boxes = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
+    if not boxes:
+        return None
+    W, H = info["width"], info["height"]
+    w, h, x, y = (int(v) for v in boxes[-1])
+    # Ignore tiny trims (compression noise at the edges) and nonsense boxes.
+    if w < W * 0.3 or h < H * 0.3:
+        return None
+    if w >= W * 0.94 and h >= H * 0.94:
+        return None
+    # Real letterbox/pillarbox bars are the same size on both sides. A dark
+    # sky or a black wall is one-sided, so don't crop those.
+    if abs(y - (H - y - h)) > H * 0.04 or abs(x - (W - x - w)) > W * 0.04:
+        return None
+    return w, h, x, y
+
+
 def ocr_at(path, t, workdir):
     """OCR one frame. Returns lowercase text, or '' if nothing readable."""
     frame = workdir / f"ocr-{t:.2f}.png"
@@ -115,26 +145,49 @@ def outro_markers(text, author):
     return found
 
 
+def loudness(path, start, end):
+    """First loudnorm pass: measure the kept segment so the second pass can
+    apply one linear gain (no pumping on music)."""
+    out = _ffmpeg_log([
+        "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(path), "-vn",
+        "-af", "loudnorm=I=-14:TP=-1.5:LRA=20:print_format=json",
+    ])
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", out)
+    if not m:
+        return None
+    data = json.loads(m.group(0))
+    try:
+        if float(data["input_i"]) < -70:  # digital silence - nothing to level
+            return None
+    except (KeyError, ValueError):
+        return None
+    return data
+
+
 # ------------------------------------------------------------ outro finding
 
 
 def find_outro(path, info, author, cfg, workdir):
-    """Return (cut_at_seconds, reason) or (None, reason)."""
+    """Return (cut_at_seconds, reason, watermarks_seen_mid_video)."""
     v = cfg["video"]
     duration = info["duration"]
     tail_start = max(duration - float(v.get("outro_max_seconds", 8)), MIN_SECONDS)
-    if tail_start >= duration - 0.5:
-        return None, "clip too short to have an outro"
 
     have_ocr = shutil.which("tesseract") is not None
     # Anything already on screen mid-video is a watermark or caption, not an
     # end card - sample a few points and ignore those words later.
-    baseline = set()
+    baseline, mid_text = set(), ""
     if have_ocr:
         for frac in (0.25, 0.5, 0.75):
             t = duration * frac
-            if t < tail_start:
-                baseline |= outro_markers(ocr_at(path, t, workdir), author)
+            if t < tail_start or tail_start >= duration - 0.5:
+                text = ocr_at(path, t, workdir)
+                mid_text += " " + text
+                baseline |= outro_markers(text, author)
+    watermarks = sorted(m for m in FOREIGN_MARKS if m in mid_text)
+
+    if tail_start >= duration - 0.5:
+        return None, "clip too short to have an outro", watermarks
 
     cuts = [c for c in scene_cuts(path) if tail_start <= c < duration - 0.3]
     freeze = trailing_freeze(path, duration)
@@ -146,7 +199,7 @@ def find_outro(path, info, author, cfg, workdir):
             probe_t = min(cut + 0.4, (cut + seg_end) / 2)
             hits = outro_markers(ocr_at(path, probe_t, workdir), author) - baseline
             if hits:
-                return cut, f"end card at {cut:.1f}s ({', '.join(sorted(hits))})"
+                return cut, f"end card at {cut:.1f}s ({', '.join(sorted(hits))})", watermarks
 
     # A still frame sitting on the end - a logo slate or a held last frame.
     # Cutting a still costs nothing even when it isn't an outro.
@@ -154,10 +207,10 @@ def find_outro(path, info, author, cfg, workdir):
         # If a scene cut lands just before the still, the card starts there.
         lead_in = [c for c in cuts if freeze - 1.0 <= c <= freeze]
         cut = lead_in[0] if lead_in else freeze
-        return cut, f"still frame from {cut:.1f}s to the end"
+        return cut, f"still frame from {cut:.1f}s to the end", watermarks
 
     note = "" if have_ocr else " (tesseract missing, text check skipped)"
-    return None, "no outro found" + note
+    return None, "no outro found" + note, watermarks
 
 
 # ----------------------------------------------------------------- encoding
@@ -167,12 +220,21 @@ def _even(expr):
     return f"trunc({expr}/2)*2"
 
 
-def video_filter(info, cfg):
+def video_filter(info, cfg, box=None):
     v = cfg["video"]
     w, h = int(v["width"]), int(v["height"])
     crop = float(v.get("crop", 1.0))
 
-    pre = f"crop={_even(f'iw*{crop}')}:{_even(f'ih*{crop}')},setsar=1"
+    # Work out the picture's real size after bar removal + edge shave.
+    src_w, src_h = (box[0], box[1]) if box else (info["width"], info["height"])
+    pre = []
+    if box:
+        pre.append("crop={}:{}:{}:{}".format(*box))
+    if crop < 1.0:
+        pre.append(f"crop={_even(f'iw*{crop}')}:{_even(f'ih*{crop}')}")
+    pre.append("setsar=1")
+    pre = ",".join(pre)
+
     fill = f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h}"
     fit = (
         f"scale={w}:{h}:force_original_aspect_ratio=decrease"
@@ -185,29 +247,29 @@ def video_filter(info, cfg):
         polish.append(f"eq=brightness={b}:contrast={c}:saturation={s}")
     if float(v.get("sharpen", 0)) > 0:
         polish.append(f"unsharp=5:5:{float(v['sharpen'])}:5:5:0")
-    polish.append("format=yuv420p")
-    polish = ",".join(polish)
+    polish = ("," + ",".join(polish)) if polish else ""
 
-    aspect = info["width"] / info["height"]
+    aspect = src_w / src_h
     if abs(aspect - w / h) / (w / h) < 0.04:
         # Already (near enough) 9:16 - fill the frame, no bars at all.
-        return f"[0:v]{pre},{fill},{polish}[v]"
+        return f"[0:v]{pre},{fill}{polish},format=yuv420p[v]"
 
     if v.get("background", "blur") == "blur":
         # Clip centred over a blurred, darkened copy of itself. The blur runs
-        # on a 1/4-size copy because full-res blur is slow and looks the same.
+        # on a 1/4-size copy because full-res blur is slow and looks the same;
+        # the polish only touches the sharp foreground.
         sw, sh = w // 4, h // 4
         return (
             f"[0:v]{pre},split[a][b];"
             f"[a]scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
-            f"boxblur=12:3,eq=brightness=-0.08,scale={w}:{h}[bg];"
-            f"[b]{fit}[fg];"
-            f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,{polish}[v]"
+            f"boxblur=12:3,eq=brightness=-0.10:saturation=0.9,scale={w}:{h},setsar=1[bg];"
+            f"[b]{fit}{polish}[fg];"
+            f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,format=yuv420p[v]"
         )
 
     return (
-        f"[0:v]{pre},{fit},"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,{polish}[v]"
+        f"[0:v]{pre},{fit}{polish},"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[v]"
     )
 
 
@@ -216,7 +278,18 @@ def output_fps(info):
     return fps if 24 <= fps <= 60 else 30
 
 
-def render(src, dest, info, start, end, cfg):
+def audio_filter(measured):
+    if not measured:
+        return "aresample=48000"
+    return (
+        "loudnorm=I=-14:TP=-1.5:LRA=20"
+        f":measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+        f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}:linear=true,aresample=48000"
+    )
+
+
+def render(src, dest, info, start, end, cfg, box=None, measured=None):
     v = cfg["video"]
     fps = output_fps(info)
     cmd = [
@@ -224,21 +297,22 @@ def render(src, dest, info, start, end, cfg):
         "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(src),
     ]
     if not info["has_audio"]:
-        # Give silent clips a silent track - a missing audio stream is a
-        # common reason Instagram rejects an upload.
+        # A reel with no audio track at all gets a silent one; Instagram is
+        # happier with a stream present.
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
 
-    cmd += ["-filter_complex", video_filter(info, cfg), "-map", "[v]"]
+    cmd += ["-filter_complex", video_filter(info, cfg, box), "-map", "[v]"]
     if info["has_audio"]:
         cmd += ["-map", "0:a:0"]
         if v.get("loudnorm", True):
-            cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+            cmd += ["-af", audio_filter(measured)]
     else:
         cmd += ["-map", "1:a:0", "-shortest"]
 
     cmd += [
         "-c:v", "libx264", "-preset", "slow", "-crf", str(v.get("crf", 18)),
         "-profile:v", "high", "-pix_fmt", "yuv420p",
+        "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
         "-r", str(fps), "-g", str(fps * 2),
         "-maxrate", "15M", "-bufsize", "30M",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
@@ -256,25 +330,37 @@ def make_post_video(src, dest, cfg, author):
     v = cfg["video"]
     info = probe(src)
     duration = info["duration"]
-    log(f"    source: {info['width']}x{info['height']} @ {info['fps']:.0f}fps, {duration:.1f}s")
+    log(f"    source: {info['width']}x{info['height']} @ {info['fps']:.0f}fps, {duration:.1f}s"
+        + ("" if info["has_audio"] else ", NO AUDIO TRACK"))
 
     start = min(float(v.get("trim_start", 0)), duration)
     end = duration - float(v.get("trim_end", 0))
 
-    outro_note = "outro removal off"
+    outro_note, watermarks = "outro removal off", []
     if v.get("remove_outro", True):
         with tempfile.TemporaryDirectory() as tmp:
-            cut, outro_note = find_outro(src, info, author, cfg, pathlib.Path(tmp))
+            cut, outro_note, watermarks = find_outro(src, info, author, cfg, pathlib.Path(tmp))
         if cut is not None:
             end = min(end, cut)
     log(f"    outro: {outro_note}")
+    if watermarks:
+        log(f"    warning: other-app watermark on screen ({', '.join(watermarks)}) - "
+            "Instagram won't recommend this one")
 
     if end - start < MIN_SECONDS:
         # Never let trimming wreck a short clip; fall back to the full length.
         log(f"    trim would leave {end - start:.1f}s - keeping the whole clip instead")
         start, end = 0.0, duration
 
-    render(src, dest, info, start, end, cfg)
+    box = content_box(src, info) if v.get("remove_bars", True) else None
+    if box:
+        log(f"    removing black bars: keeping {box[0]}x{box[1]} of {info['width']}x{info['height']}")
+
+    measured = None
+    if info["has_audio"] and v.get("loudnorm", True):
+        measured = loudness(src, start, end)
+
+    render(src, dest, info, start, end, cfg, box, measured)
 
     out = probe(dest)
     size = dest.stat().st_size
@@ -288,6 +374,9 @@ def make_post_video(src, dest, cfg, author):
         "source_seconds": round(duration, 2),
         "kept": [round(start, 2), round(end, 2)],
         "outro": outro_note,
+        "bars_removed": bool(box),
+        "has_audio": info["has_audio"],
+        "foreign_watermark": watermarks,
         "seconds": round(out["duration"], 2),
     }
 

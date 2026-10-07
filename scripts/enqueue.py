@@ -29,20 +29,28 @@ def shortcode_of(url):
 
 
 def resolve_share_link(url):
-    """instagram.com/share/... links are redirects to the real reel URL."""
+    """instagram.com/share/... links redirect to the real reel URL. Instagram
+    answers browser user-agents with an HTML page instead of the redirect, so
+    ask like curl does (same trick cobalt uses), then fall back to the page's
+    canonical link."""
     try:
         resp = requests.get(
-            url,
-            allow_redirects=True,
-            timeout=30,
-            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"},
+            url, allow_redirects=False, timeout=30, headers={"User-Agent": "curl/7.88.1"}
         )
+        location = resp.headers.get("location", "")
+        if shortcode_of(location):
+            return location
+        resp = requests.get(url, allow_redirects=True, timeout=30)
         for hop in [*resp.history, resp]:
             if shortcode_of(hop.url):
                 return hop.url
-            location = hop.headers.get("location", "")
-            if shortcode_of(location):
-                return location
+        for pattern in (
+            r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"',
+            r'<meta[^>]+property="og:url"[^>]+content="([^"]+)"',
+        ):
+            m = re.search(pattern, resp.text)
+            if m and shortcode_of(m.group(1)):
+                return m.group(1)
     except requests.RequestException as exc:
         log(f"could not resolve share link: {exc}")
     return None

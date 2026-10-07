@@ -21,6 +21,7 @@ import json
 import os
 import pathlib
 import random
+import subprocess
 import tempfile
 import time
 from zoneinfo import ZoneInfo
@@ -31,6 +32,7 @@ from common import (
     POSTED,
     QUEUE,
     READY,
+    RELEASE_TAG,
     STATE,
     build_caption,
     commit_and_push,
@@ -50,6 +52,8 @@ PLAN = STATE / "plan.json"
 
 # Post anything due before the next hourly run gets here.
 HORIZON = dt.timedelta(minutes=58)
+# Never post two reels closer together than this.
+MIN_GAP = dt.timedelta(minutes=30)
 # How often to retry a slot whose post failed (bad token, Meta outage...).
 SLOT_ATTEMPTS = 3
 # How often to retry one reel Instagram rejects before skipping it for good.
@@ -180,11 +184,14 @@ def upload_bytes(creation_id, token, path):
                 "Authorization": f"OAuth {token}",
                 "offset": "0",
                 "file_size": str(size),
+                "Content-Type": "application/octet-stream",
             },
             data=f,
             timeout=600,
         ), "video upload")
-    if not body.get("success", True):
+    # Meta's documented failure body is {"debug_info": {...}} with no
+    # "success" key at all, so only an explicit success counts.
+    if body.get("success") is not True or "debug_info" in body:
         raise RuntimeError(f"video upload failed: {body}")
 
 
@@ -205,6 +212,33 @@ def await_ready(creation_id, token, timeout_s=900):
         log(f"    processing ({status})...")
         time.sleep(15)
     raise RuntimeError("timed out waiting for Instagram to process the video")
+
+
+def copyright_check(creation_id, token):
+    """Meta's own copyright scan of the container - logged, not acted on."""
+    try:
+        body = requests.get(
+            f"{GRAPH}/{creation_id}",
+            params={"fields": "copyright_check_status", "access_token": token},
+            timeout=60,
+        ).json()
+        status = body.get("copyright_check_status")
+        if status:
+            log(f"    copyright check: {status}")
+        return status
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def check_token(ig_user_id, token):
+    """Cheap daily canary: fails loudly (an Actions failure email) the day the
+    token stops working, instead of on the next post attempt."""
+    body = _check(requests.get(
+        f"{GRAPH}/{ig_user_id}",
+        params={"fields": "username", "access_token": token},
+        timeout=60,
+    ), "token check")
+    log(f"token OK - posting as @{body.get('username')}")
 
 
 def publish(ig_user_id, token, creation_id):
@@ -240,9 +274,22 @@ def post_one(item, cfg, ig_user_id, token):
     creation_id = create_container(ig_user_id, token, caption)
     upload_bytes(creation_id, token, video)
     await_ready(creation_id, token)
+    item["copyright_check"] = copyright_check(creation_id, token)
     media_id = publish(ig_user_id, token, creation_id)
     log(f"    published, media id {media_id}")
     return media_id
+
+
+def delete_asset(item):
+    """Free the release slot once a reel is posted (a release holds at most
+    1000 files) and stop hosting someone else's video publicly."""
+    asset = item["asset_url"].rsplit("/", 1)[-1]
+    proc = subprocess.run(
+        ["gh", "release", "delete-asset", RELEASE_TAG, asset, "--yes"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        log(f"    (couldn't delete release asset {asset}: {proc.stderr.strip()[:200]})")
 
 
 # --------------------------------------------------------------------- main
@@ -290,6 +337,7 @@ def post_next(cfg, ig_user_id, token, tz):
     })
     write_item(POSTED / source.name, done)
     source.unlink()
+    delete_asset(item)
     log(f"    moved to posted/ (@{item['author']})")
     return True
 
@@ -320,6 +368,7 @@ def main():
     now = dt.datetime.now(tz)
     plan, is_new = todays_plan(cfg, now)
     if is_new and not DRY_RUN:
+        check_token(ig_user_id, token)
         save_plan(plan)
         commit_and_push(f"plan {plan['date']}")
 
@@ -334,8 +383,13 @@ def main():
         return
 
     failed = False
+    last_post = None
     for slot in due:
         at = dt.datetime.fromisoformat(slot["at"])
+        # When cron runs were dropped and several slots are overdue, don't
+        # fire them back to back - keep them MIN_GAP apart.
+        if last_post is not None:
+            at = max(at, last_post + MIN_GAP)
         wait = (at - dt.datetime.now(tz)).total_seconds()
         if wait > 0 and not DRY_RUN:
             log(f"sleeping {wait / 60:.1f} min until {at.strftime('%H:%M:%S')}")
@@ -344,6 +398,8 @@ def main():
         try:
             posted = post_next(cfg, ig_user_id, token, tz)
             slot["status"] = "posted" if posted else "empty"
+            if posted:
+                last_post = dt.datetime.now(tz)
         except Exception as exc:
             failed = True
             slot["attempts"] += 1

@@ -14,6 +14,8 @@ READY = ROOT / "ready"
 POSTED = ROOT / "posted"
 STATE = ROOT / "state"
 TRACKED = ("queue", "ready", "posted", "state")
+# Edited videos wait on this GitHub release until they're posted.
+RELEASE_TAG = "media"
 
 
 def load_config():

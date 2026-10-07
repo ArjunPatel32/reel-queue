@@ -27,9 +27,12 @@ hashtags: ""
 video:
   width: 1080
   height: 1920
-  # Shave this fraction off every edge (0.97 = ~3%). Trims stray borders and
-  # edge watermarks. 1.0 = off.
-  crop: 0.97
+  # Shave this fraction off every edge (0.97 = ~3%). 1.0 = off. Off by
+  # default: it costs picture and doesn't stop Instagram matching the copy.
+  crop: 1.0
+  # Detect black bars baked into the video (a wide clip letterboxed inside a
+  # 9:16 frame) and remove them.
+  remove_bars: true
   # Clips that aren't 9:16: "blur" puts them over a blurred copy of
   # themselves, "black" uses plain bars.
   background: blur
@@ -43,12 +46,14 @@ video:
   remove_outro: true
   outro_max_seconds: 8
 
-  # Picture polish. brightness 0 / contrast 1 / saturation 1 / sharpen 0 = untouched.
+  # Picture polish. brightness 0 / contrast 1 / saturation 1 / sharpen 0 =
+  # untouched. Keep it mild: Instagram re-compresses, and heavy sharpening
+  # turns into blocky noise.
   brightness: 0.03
-  contrast: 1.06
-  saturation: 1.18
+  contrast: 1.05
+  saturation: 1.15
   sharpen: 0.5
-  # Even out volume so every reel plays at the same loudness.
+  # Level the volume (two-pass, so music doesn't pump).
   loudnorm: true
   # Encode quality, lower = better/bigger. 18 is visually lossless.
   crf: 18

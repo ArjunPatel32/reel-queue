@@ -33,9 +33,10 @@ def main():
     cfg = load_config()
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="preview-"))
     log(f"--- {code} (preview)")
-    raw, final, author, edit_info = fetch_and_edit(
+    raw, final, meta, edit_info = fetch_and_edit(
         f"https://www.instagram.com/reel/{code}/", code, cfg, write_cookies(), workdir
     )
+    author = meta["author"]
 
     sheet = workdir / f"{code}-compare.jpg"
     contact_sheet(raw, final, sheet, edit_info["kept"])
@@ -44,15 +45,24 @@ def main():
     sheet_url = upload(sheet, f"{code}-compare.jpg", tag=TAG, title="Edit previews")
     caption = build_caption(cfg, author)
 
+    credit = f"**@{author}**"
+    if meta["poster"] != author:
+        credit += f" (posted by @{meta['poster']}, who credits @{author})"
     lines = [
         f"## Preview: {code}",
-        f"- Original poster: **@{author}**",
+        f"- Credit: {credit}",
         f"- Kept {edit_info['kept'][0]}s - {edit_info['kept'][1]}s "
         f"of {edit_info['source_seconds']}s ({edit_info['outro']})",
+        f"- Black bars removed: {'yes' if edit_info['bars_removed'] else 'no'}",
         f"- Caption: `{caption}`",
         f"- [Edited video]({video_url})",
         f"- [Before/after frames]({sheet_url}) (top: original, bottom: edited)",
     ]
+    if not edit_info["has_audio"]:
+        lines.append("- ⚠️ No audio track - the queue would park this one instead of posting it")
+    if edit_info["foreign_watermark"]:
+        lines.append(f"- ⚠️ Other-app watermark on screen ({', '.join(edit_info['foreign_watermark'])}) "
+                     "- Instagram won't recommend it")
     log("\n".join(lines))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

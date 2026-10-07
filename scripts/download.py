@@ -4,19 +4,22 @@ Runs on ingest and again every few hours on a retry cron. Instagram blocks
 datacenter IPs unpredictably, so failures here are expected and harmless -
 the item stays in queue/ and gets retried until it works.
 
-A successful item moves queue/ -> ready/ with a public asset URL attached.
+A successful item moves queue/ -> ready/ with the edited video attached as a
+release asset.
 """
 
 import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 
 from common import (
     QUEUE,
     READY,
+    RELEASE_TAG,
     list_items,
     load_config,
     log,
@@ -26,8 +29,19 @@ from common import (
 )
 from edit import make_post_video
 
-RELEASE_TAG = "media"
 MAX_ATTEMPTS = 40
+
+HANDLE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+# "credit: @x", "cr @x", "via @x", "🎥 @x", "video by @x" ... in the poster's
+# caption. Repost pages usually name the real creator this way. A bare
+# "by @x" is deliberately NOT matched - "music by @x" / "edit by @x" would
+# credit the wrong person.
+CREDIT = re.compile(
+    r"(?:credits?|\bcr\b|\bvia|(?:video|reel|clip|content|filmed|made|created|posted) by"
+    r"|🎥|📹|🎬|📸|©)"
+    r"\s*(?:to)?\s*[:\-–—]?\s*@([A-Za-z0-9._]{1,30})",
+    re.IGNORECASE,
+)
 
 
 def write_cookies():
@@ -40,28 +54,26 @@ def write_cookies():
     return str(path)
 
 
-def author_of(info):
-    """The original poster's @handle. yt-dlp puts the Instagram username in
-    `channel`; `uploader_id` is the numeric account id and `uploader` is the
-    display name, so neither of those can go in a caption."""
+def poster_of(info):
+    """The account that posted the reel. yt-dlp puts the Instagram username
+    in `channel`; `uploader_id` is the numeric account id and `uploader` is
+    the display name, so neither of those can go in a caption."""
     handle = (info.get("channel") or "").strip().lstrip("@")
-    if handle and " " not in handle:
-        return handle
-    for key in ("channel_url", "uploader_url"):
-        url = (info.get(key) or "").rstrip("/")
-        if "instagram.com/" in url:
-            tail = url.rsplit("/", 1)[-1]
-            if tail and not tail.isdigit():
-                return tail
+    return handle if HANDLE.match(handle) else None
+
+
+def credited_in(description, poster):
+    """A different account the poster credits in their caption, if any."""
+    for m in CREDIT.finditer(description or ""):
+        handle = m.group(1).rstrip(".")
+        if HANDLE.match(handle) and handle.lower() != (poster or "").lower():
+            return handle
     return None
 
 
-def fetch(url, cookies, workdir, code):
-    """One yt-dlp call for both the video and its metadata, so Instagram only
-    sees one round of requests per reel."""
+def _yt_dlp(url, cookies, workdir, code):
     cmd = [
         "yt-dlp",
-        "--no-warnings",
         "--no-playlist",
         "--write-info-json",
         "-f", "bv*+ba/b",
@@ -71,8 +83,31 @@ def fetch(url, cookies, workdir, code):
     if cookies:
         cmd += ["--cookies", cookies]
     cmd.append(url)
-    run(cmd)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    for line in proc.stderr.splitlines():
+        if line.startswith(("WARNING", "ERROR")):
+            log(f"    yt-dlp: {line}")
+    if proc.returncode != 0:
+        tail = "\n".join(proc.stderr.strip().splitlines()[-3:])
+        raise RuntimeError(f"yt-dlp failed: {tail}")
+
+
+def fetch(url, cookies, workdir, code):
+    """One yt-dlp call for both the video and its metadata, so Instagram only
+    sees one round of requests per reel. If a cookie-backed attempt fails
+    (a flagged or expired burner session makes yt-dlp error out rather than
+    fall back), try once more logged-out."""
+    try:
+        _yt_dlp(url, cookies, workdir, code)
+    except RuntimeError:
+        if not cookies:
+            raise
+        log("    failed with IG_COOKIES - retrying logged-out (the cookies may be dead)")
+        _yt_dlp(url, None, workdir, code)
+
     info = json.loads((workdir / f"{code}.info.json").read_text(encoding="utf-8"))
+    if info.get("_type") == "playlist":
+        raise RuntimeError("this is a carousel post, not a single reel - skipping")
     videos = [p for p in workdir.glob(f"{code}.*") if p.suffix in (".mp4", ".mov", ".webm", ".mkv")]
     if not videos:
         raise RuntimeError("yt-dlp finished but no video file was written")
@@ -82,18 +117,26 @@ def fetch(url, cookies, workdir, code):
 
 
 def fetch_and_edit(url, code, cfg, cookies, workdir):
-    """Download + edit one reel. Returns (raw_path, final_path, author, edit_info)."""
+    """Download + edit one reel. Returns (raw_path, final_path, meta, edit_info)
+    where meta has `author` (who gets the credit) and `poster` (who posted it)."""
     raw, info = fetch(url, cookies, workdir, code)
-    author = author_of(info)
-    if not author:
+    poster = poster_of(info)
+    if not poster:
         raise RuntimeError(
-            "could not find the original account's username in yt-dlp's metadata "
+            "could not find the poster's username in yt-dlp's metadata "
             f"(channel={info.get('channel')!r}, uploader={info.get('uploader')!r})"
         )
-    log(f"    by @{author}")
+    original = credited_in(info.get("description"), poster)
+    author = original or poster
+    if original:
+        log(f"    posted by @{poster}, who credits @{original} - crediting @{original}")
+    else:
+        log(f"    by @{poster}")
+
     final = workdir / f"{code}.final.mp4"
     edit_info = make_post_video(raw, final, cfg, author)
-    return raw, final, author, edit_info
+    meta = {"author": author, "poster": poster}
+    return raw, final, meta, edit_info
 
 
 def ensure_release(tag, title):
@@ -119,19 +162,25 @@ def process(item, cfg, cookies, workdir):
     url, code = item["url"], item["shortcode"]
     log(f"--- {code}")
 
-    _, final, author, edit_info = fetch_and_edit(url, code, cfg, cookies, workdir)
+    _, final, meta, edit_info = fetch_and_edit(url, code, cfg, cookies, workdir)
     asset_url = upload(final, f"{code}.mp4")
 
     ready = dict(item)
     ready.pop("_path", None)
     ready.pop("caption", None)
+    ready.update(meta)
     ready.update({
-        "author": author,
         "asset_url": asset_url,
         "duration": edit_info["seconds"],
         "edit": edit_info,
         "last_error": None,
     })
+    if not edit_info["has_audio"]:
+        # Usually a music reel whose licensed track didn't come through -
+        # a muted repost isn't worth posting. Delete "skip" to post anyway.
+        ready["skip"] = True
+        ready["skip_reason"] = "no audio track in the download"
+        log("    no audio - parked in ready/ with skip=true, it won't be posted")
     name = pathlib.Path(item["_path"]).name
     write_item(READY / name, ready)
     pathlib.Path(item["_path"]).unlink()
@@ -173,6 +222,11 @@ def main():
                 item["gave_up"] = True
                 log("    giving up on this one, leaving it in queue/ for you to look at")
             write_item(path, item)
+            # A rate-limit or login wall will hit every other item the same
+            # way from this IP - stop instead of hammering Instagram.
+            if re.search(r"rate.?limit|429|login|not granting access", str(exc), re.I):
+                log("    looks like Instagram is blocking this runner - stopping for now")
+                break
 
     if failures:
         log(f"{failures} item(s) will be retried on the next run")

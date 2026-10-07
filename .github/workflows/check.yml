@@ -17,13 +17,13 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
       - name: Lint workflow files
-        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -color
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
 
       - uses: ./.github/actions/setup
         with:
@@ -40,7 +40,7 @@ jobs:
 
       - name: Keep the test's before/after frames
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: selftest-sheet
           path: ${{ runner.temp }}/selftest-sheet.jpg
