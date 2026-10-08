@@ -9,6 +9,23 @@ Runs entirely on GitHub Actions. Costs nothing. Doesn't need your PC on.
 **New here or picking this back up? Read [PROGRESS.md](PROGRESS.md) first**, then
 [SETUP.md](SETUP.md).
 
+## In plain English
+
+**Your whole job:** in Instagram, on any reel → share → **Share to…** →
+**Queue Reel**. Share ten in a row if you like, then forget about them.
+
+Within a minute the link is saved. About 4 minutes later the reel is
+downloaded, the creator's outro is cut, it's brightened and polished, and
+it's waiting in `ready/`. Every day the poster picks 1–3 times between 10am
+and 8pm (2–4 while more than 10 are waiting) and posts the oldest waiting
+reels with `🎥 @creator` as the caption.
+
+A typical week: share 5 reels Monday night → Tuesday 2 go up (say 11:42am and
+4:15pm) → Wednesday 1 → Thursday the last 2 → nothing until you share more.
+
+If Instagram blocks a download, it retries every 4 hours. If your Instagram
+login ever stops working, GitHub emails you that day.
+
 ## How it works
 
 ```

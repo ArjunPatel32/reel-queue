@@ -220,3 +220,9 @@ editing goals (see decisions). Rewrote editing + posting, added preview and
 self-test workflows. Ran a 4-area research pass with independent verifiers
 (findings above) and applied it. Live-tested: logged-out download + edit of a
 real reel on a runner works. Ran an adversarial code review workflow.
+
+Arjun asked how it works day to day (explained; plain-English version now at
+the top of README.md) and said he'll do the setup "in a bit or later".
+**Resume at: SETUP.md step 2 (iPhone Shortcut), then steps 3–6 (Meta).** Offer
+to walk him through each screen. Also check the Actions tab: had the hourly
+post cron started firing? If not, suggest SETUP step 9 (cron-job.org).
