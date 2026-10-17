@@ -1,0 +1,23 @@
+{
+  "shortcode": "DejmsgsOiax",
+  "url": "https://www.instagram.com/reel/DejmsgsOiax/",
+  "added_at": "2026-10-17T23:52:19+00:00",
+  "attempts": 0,
+  "last_error": null,
+  "author": "vviennteru",
+  "poster": "vviennteru",
+  "asset_url": "https://github.com/ArjunPatel32/reel-queue/releases/download/media/20261017T235219-DejmsgsOiax.mp4",
+  "duration": 6.17,
+  "edit": {
+    "source_seconds": 6.1,
+    "kept": [
+      0.0,
+      6.1
+    ],
+    "outro": "no outro found",
+    "bars_removed": false,
+    "has_audio": true,
+    "foreign_watermark": [],
+    "seconds": 6.17
+  }
+}
