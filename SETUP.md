@@ -4,9 +4,9 @@ Nothing here costs money. Steps 1 and 2 get the share button working (reels
 start queueing and getting edited). Steps 3–6 connect Instagram so they
 actually post.
 
-> **Already done** (see PROGRESS.md): the repo, Actions permissions, git/gh.
-> Downloading has been tested from GitHub's servers without any login, so the
-> cookies step is now optional (step 8).
+> **Steps 1–7 are done** (2026-10-17) — it's live and posting. Only the
+> optional steps 8–9 are left. Come back to step 5 if the token ever dies,
+> or step 2 if you get a new phone.
 
 ---
 
@@ -18,7 +18,7 @@ encrypted either way.
 
 ---
 
-## 2. The iPhone Shortcut (10 min)
+## 2. The iPhone Shortcut (10 min) — ✅ DONE (2026-10-17)
 
 ### a. A token for your phone — Actions only
 
@@ -57,7 +57,9 @@ pasted into a chat, and nothing uses it any more.
   - `inputs` (Dictionary) → inside it, one field:
     - `url` (Text) → tap the value, then pick the **Shortcut Input** variable
 
-Then tap the **ⓘ** (or the shortcut's name at the top) → **Details**:
+Then tap the **ⓘ** in the editor's bottom toolbar → **Details** (on iOS 26
+it's not in the name menu). Or skip this: picking **Shortcut Input** adds a
+"Receive … from Nowhere" block at the top — tap *Nowhere* → *Share Sheet*.
 - **Show in Share Sheet** → ON
 - **Share Sheet Types** → turn everything off except **URLs** and **Text**
 - Rename it **Queue Reel**
@@ -76,7 +78,7 @@ Never share this Shortcut with anyone — the token is inside it.
 
 ---
 
-## 3. Instagram account → Professional (5 min)
+## 3. Instagram account → Professional (5 min) — ✅ DONE (2026-10-17)
 
 On the account you're posting to: **Settings → Account type and tools →
 Switch to professional account → Creator** (Business works too). The account
@@ -86,7 +88,9 @@ Create a Facebook Page (free; nobody has to see it — it's the object Meta's
 API hangs Instagram permissions off): **facebook.com/pages/create**.
 
 Link them: **facebook.com → your Page → Settings → Linked accounts →
-Instagram → Connect account**. Confirm it says connected before moving on —
+Instagram → Connect account** (or in Instagram: **Edit profile → Page →
+Connect**, which is what worked on 2026-10-17). Confirm it says connected
+before moving on —
 almost every "the API can't see my account" problem traces back to this.
 
 If the Page requires two-factor authentication, make sure your Facebook
@@ -94,10 +98,13 @@ account has 2FA on, or publishing will be refused.
 
 ---
 
-## 4. Meta developer app (10 min)
+## 4. Meta developer app (10 min) — ✅ DONE (2026-10-17)
 
 1. Go to **developers.facebook.com/apps/creation** (sign in, accept the
-   developer terms, verify if asked — no card, no fee).
+   developer terms, verify if asked — no fee). If phone verification says
+   *"Your phone number has been added, please try another phone number"*,
+   the number is already on your Facebook profile: use the **adding a credit
+   card** link under the form instead (it's only an identity check).
 2. **App details:** any name (e.g. `reel-queue`), your email → Next.
 3. **Use cases:** pick **Manage messaging & content on Instagram** → Next.
 4. **Business:** **I don't want to connect a business portfolio yet** → Next
@@ -118,7 +125,16 @@ things around, so look for the closest match if a label differs.
 
 ---
 
-## 5. Get a token that never expires (15 min)
+## 5. Get a token that never expires (15 min) — ✅ DONE (2026-10-17)
+
+> **Easier route (used 2026-10-17, no app secret in a URL):** in the Graph
+> API Explorer (a), click the ⓘ next to the token → *Open in Access Token
+> Tool* → **Extend Access Token**. Paste that extended token into the
+> Explorer's Access Token box and query
+> `me/accounts?fields=name,access_token,instagram_business_account` — the
+> Page's `access_token` is `IG_ACCESS_TOKEN` and
+> `instagram_business_account.id` is `IG_USER_ID`. Then check it in (d).
+> Redo this if the token ever dies.
 
 Meta's default tokens die in an hour. A *Page* token made from a long-lived
 user token doesn't expire — that's the one we want.
@@ -174,7 +190,7 @@ poster's daily token check fails and GitHub emails you — redo step 5.
 
 ---
 
-## 6. Add the secrets (2 min)
+## 6. Add the secrets (2 min) — ✅ DONE (2026-10-17)
 
 Repo → **Settings → Secrets and variables → Actions → New repository
 secret**:
@@ -188,7 +204,7 @@ Paste them straight into GitHub — don't send them in a chat.
 
 ---
 
-## 7. First post
+## 7. First post — ✅ DONE (2026-10-17)
 
 1. Share 1–2 reels with the Shortcut and wait for them to reach `ready/`.
 2. **Actions → Post reels → Run workflow → tick *dry_run* → Run.** It prints

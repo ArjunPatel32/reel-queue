@@ -2,12 +2,12 @@
 
 Running record of what's done and what's next, so we can pick this up cold.
 
-**Status (2026-10-07, end of session): everything up to posting is BUILT AND
-PROVEN on GitHub's servers — a real ingest run queued, downloaded (logged-out),
-credited, edited and staged a reel; the poster planned the day and dry-ran
-correctly; 81/81 self-tests pass. Waiting on Arjun for the iPhone Shortcut
-(SETUP step 2) and the Meta setup (steps 3–6). Nothing posted yet; queue is
-empty (the test reel was removed).**
+**Status (2026-10-17): LIVE. The whole pipeline works end to end — Arjun's
+iPhone Shortcut queues reels, they're downloaded/edited/credited on GitHub's
+runners, and the first real post went out (DejmsgsOiax, 17:26 PT). SETUP
+steps 1–7 done; Arjun says "looks like it works". Remaining items are
+optional: cron-job.org for punctual posting (step 9), outro test on a real
+end card, and confirming posts are visible logged-out (Dev-mode app).**
 
 ---
 
@@ -176,17 +176,32 @@ that came out of it — keep them when changing code:
 
 **Milestone B — share button**
 
-5. [ ] **[Arjun] New Actions-only PAT + build the Shortcut** — SETUP step 2.
-       Delete the old Contents PAT.
-6. [ ] Share a reel, confirm it reaches `ready/` with the right `author`.
+5. [x] **[Arjun] New Actions-only PAT + build the Shortcut** — SETUP step 2
+       (2026-10-17). Unconfirmed whether he deleted the old Contents PAT.
+6. [x] Share a reel, confirm it reaches `ready/` with the right `author` —
+       2026-10-17: DejmsgsOiax → ready/ in ~1 min, author `vviennteru`.
+       (iOS 26 note: "Show in Share Sheet" lives under the ⓘ in the editor's
+       bottom toolbar, not the name menu.)
 
 **Milestone C — make it actually post (~40 min)**
 
 7. [ ] **[Arjun]** IG → Professional + Page, Meta app (Facebook login
-       setup!), tokens — SETUP steps 3–5.
-8. [ ] **[Arjun]** Paste `IG_USER_ID` / `IG_ACCESS_TOKEN` into repo secrets
-       (step 6) — directly in GitHub, not in chat.
-9. [ ] Dry run, then `post_now`; check the post is visible logged-out.
+       setup!), tokens — SETUP steps 3–5. 2026-10-17: step 3 done (Pro
+       account, Page made with his personal FB, linked via IG Edit profile,
+       FB 2FA on). Step 4 done (Meta app created; dev-account phone
+       verification failed with "Your phone number has been added" because
+       the number was already on his FB profile). Step 5 done via Graph
+       Explorer → Access Token Tool "Extend" → `me/accounts?fields=name,
+       access_token,instagram_business_account` (no app secret in a URL).
+8. [x] **[Arjun]** Paste `IG_USER_ID` / `IG_ACCESS_TOKEN` into repo secrets
+       (step 6) — set 2026-10-18 00:23 UTC. Dry run OK (plan + caption
+       right) — but dry run never calls Meta, so the token is untested
+       until the first real post.
+9. [~] Dry run, then `post_now`; check the post is visible logged-out.
+       **2026-10-17 17:26 PT: FIRST REAL POST WORKED** — DejmsgsOiax,
+       media id 18408502639095443, caption `🎥 @vviennteru`. Resumable
+       upload + share_to_feed confirmed live (~35 s end to end). Still to
+       confirm: visible logged-out (Dev-mode app question).
 10. [ ] Optional: cron-job.org trigger for punctual posting (step 9).
 
 ## Things that have NOT been verified
@@ -223,6 +238,21 @@ real reel on a runner works. Ran an adversarial code review workflow.
 
 Arjun asked how it works day to day (explained; plain-English version now at
 the top of README.md) and said he'll do the setup "in a bit or later".
+
+**2026-10-17** — Arjun back to finish it. Nothing had changed: no secrets, no
+ingest runs. Poster healthy, idling ("not set yet"). Hourly post cron fires
+only 4–7×/day (gaps up to 5 h) → recommend SETUP step 9. Re-ran Preview on
+DQwMwTLEvbn: logged-out download still works, credit `@david_editor_`.
+Walked him through SETUP steps 2–6 screen by screen; all done the same
+evening. First real post via `post_now` worked first try. Snags hit (now
+noted in SETUP.md): iOS 26 hides "Show in Share Sheet" under the editor's ⓘ;
+Meta dev-account phone verification rejects a number already on the FB
+profile ("Your phone number has been added") — use the credit-card option or
+remove the number first. Note for future sessions: links to `media` release
+assets 404 once a reel posts (deleted by design) — use Preview edit to show
+him a reel's edit.
+**Resume at:** nothing required. Offer step 9 (cron-job.org) and an outro
+test if he wants; check the Actions tab for failures (token death emails).
 **Resume at: SETUP.md step 2 (iPhone Shortcut), then steps 3–6 (Meta).** Offer
 to walk him through each screen. Also check the Actions tab: had the hourly
 post cron started firing? If not, suggest SETUP step 9 (cron-job.org).
