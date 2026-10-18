@@ -13,6 +13,11 @@ Runs entirely on GitHub Actions. Costs nothing. Doesn't need your PC on.
 
 **Your whole job:** in Instagram, on any reel → share → **Share to…** →
 **Queue Reel**. Share ten in a row if you like, then forget about them.
+It asks for **your take** — a line of your own that gets drawn on screen
+near the top. Type one whenever you can: Instagram stops recommending
+accounts whose posts are mostly other people's videos, and your own
+on-screen context is what counts as original (credit and colour don't).
+Leave it blank to skip.
 
 Within a minute the link is saved. About 4 minutes later the reel is
 downloaded, the creator's outro is cut, it's brightened and polished, and

@@ -273,8 +273,23 @@ Later that evening:
   him a fresh account is ~15–20 min (move Page link, redo step 5 + secrets;
   app/Shortcut/code unchanged) but hits the same rule if it only reposts.
 
-**Resume at:** ask if he wants the "your take" text overlay; check the next
-post's cover used `thumb_offset`. Optional: step 9 (cron-job.org), outro
+- **"Your take" BUILT and live (11f24fa).** Shortcut sends optional `take`
+  → ingest.yml input → `item["take"]` → `edit.take_overlay` draws it near
+  the top (TAKE_TOP=260, DejaVu Sans Bold 64/54/46 px, ≤4 lines, black@0.6
+  boxes, emoji dropped, text via textfile=). Preview has a `take` input.
+  fonts-dejavu-core added to setup (apt cache key → v2). 84/84 self-tests
+  incl. OCR read-back; preview on DejmsgsOiax looked right. Caption still
+  just `🎥 @author` (his rule). Arjun still has to add **Ask for Input** +
+  the `take` field to his Shortcut (SETUP step 2) — gave him steps.
+- Account Status still said "can't be recommended" after he archived 33
+  posts. He's leaning towards a **fresh account** — advised: fine if the old
+  one has no followers he cares about; it must keep posts mostly his own
+  (take on every repost + some originals). Switch = new IG → Professional,
+  move the Page link, redo step 5 token + both secrets; nothing else changes.
+
+**Resume at:** did he add the take step to the Shortcut and did a take
+reel post OK? New account switch if he wants it (walk him through). Check
+the next post's cover used `thumb_offset`. Optional: step 9 (cron-job.org), outro
 test. Check the Actions tab for failures (token death emails).
 **Resume at: SETUP.md step 2 (iPhone Shortcut), then steps 3–6 (Meta).** Offer
 to walk him through each screen. Also check the Actions tab: had the hourly

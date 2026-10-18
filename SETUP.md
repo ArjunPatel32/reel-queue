@@ -54,8 +54,15 @@ pasted into a chat, and nothing uses it any more.
   - `Accept` → `application/vnd.github+json`
 - **Request Body:** `JSON`, then add two fields:
   - `ref` (Text) → `main`
-  - `inputs` (Dictionary) → inside it, one field:
+  - `inputs` (Dictionary) → inside it:
     - `url` (Text) → tap the value, then pick the **Shortcut Input** variable
+    - `take` (Text) → pick the **Provided Input** variable (see below)
+
+**Your take (added 2026-10-17):** *above* Get Contents of URL, add **Ask for
+Input** → type *Text*, prompt `Your take? (blank = none)`. Whatever you type
+is drawn on screen near the top of the reel — the kind of added context
+Instagram counts as original. Leave it blank and tap Done to skip; tapping
+✕ cancels the whole share.
 
 Then tap the **ⓘ** in the editor's bottom toolbar → **Details** (on iOS 26
 it's not in the name menu). Or skip this: picking **Shortcut Input** adds a
