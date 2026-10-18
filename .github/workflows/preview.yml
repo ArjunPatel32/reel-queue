@@ -9,6 +9,10 @@ on:
       url:
         description: Instagram reel URL
         required: true
+      take:
+        description: Your take - text shown on screen (optional)
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -29,8 +33,9 @@ jobs:
           media-tools: "true"
 
       - name: Download and edit
-        run: python scripts/preview.py --url "${URL}"
+        run: python scripts/preview.py --url "${URL}" --take "${TAKE}"
         env:
           URL: ${{ inputs.url }}
+          TAKE: ${{ inputs.take }}
           IG_COOKIES: ${{ secrets.IG_COOKIES }}
           GH_TOKEN: ${{ github.token }}

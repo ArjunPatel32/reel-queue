@@ -1,5 +1,6 @@
-# Fired by the iPhone Shortcut (workflow_dispatch with a `url` input; the
-# older repository_dispatch event is still accepted).
+# Fired by the iPhone Shortcut (workflow_dispatch with a `url` input and an
+# optional `take` - text to show on screen; the older repository_dispatch
+# event is still accepted).
 #
 # No concurrency group on purpose: by default GitHub keeps only one *pending*
 # run per group and cancels the rest, so sharing three reels in a row would
@@ -15,6 +16,10 @@ on:
       url:
         description: Instagram reel URL
         required: true
+      take:
+        description: Your take - text shown on screen (optional)
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -36,9 +41,10 @@ jobs:
 
       - name: Add to queue
         id: enqueue
-        run: python scripts/enqueue.py --url "${URL}"
+        run: python scripts/enqueue.py --url "${URL}" --take "${TAKE}"
         env:
           URL: ${{ github.event.client_payload.url || inputs.url }}
+          TAKE: ${{ github.event.client_payload.take || inputs.take }}
           GH_TOKEN: ${{ github.token }}
 
       - name: Save the share

@@ -8,7 +8,8 @@
   3. Strip baked-in black bars, reframe to 1080x1920 (blurred fill for clips
      that aren't 9:16), polish colour/sharpness, level the loudness, and
      encode to Instagram's Reels spec.
-  4. Pick the cover frame for the profile grid.
+  4. Draw "your take" - optional text you typed when sharing - near the top.
+  5. Pick the cover frame for the profile grid.
 
 Everything here is plain ffmpeg + tesseract on the GitHub runner. Each step
 logs what it decided, so a bad cut is easy to trace back from the Actions log.
@@ -21,6 +22,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
+import unicodedata
 
 from common import log, run
 
@@ -49,6 +52,16 @@ SILENT_DB = -45.0
 COVER_SEARCH_SECONDS = 8
 COVER_LUMA = (32, 200)
 COVER_MIN_SPREAD = 40
+# "Your take": a line of Arjun's own text burned in near the top - the kind
+# of added context Instagram's originality rules count (credit, crops and
+# colour don't). Sizes are (font px, characters per line); the biggest that
+# fits in TAKE_MAX_LINES wins. TAKE_TOP sits below Instagram's Reels header
+# and inside the 3:4 crop the profile grid shows.
+TAKE_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+TAKE_SIZES = ((64, 21), (54, 25), (46, 30))
+TAKE_MAX_LINES = 4
+TAKE_MAX_CHARS = 200
+TAKE_TOP = 260
 
 
 class EditError(RuntimeError):
@@ -326,6 +339,69 @@ def find_outro(path, info, author, cfg, workdir, box=None):
     return None, "no outro found" + note, watermarks
 
 
+# ---------------------------------------------------------------- your take
+
+
+def clean_take(text):
+    """The take as it can be drawn: emoji and other symbols the font has no
+    glyph for are dropped (they'd show as empty boxes), whitespace collapsed,
+    length capped."""
+    text = " ".join((text or "").split())
+    text = "".join(
+        ch for ch in text
+        if ord(ch) <= 0xFFFF and ch not in "︎️"
+        and unicodedata.category(ch) not in ("So", "Cs", "Co", "Cn", "Cf", "Cc")
+    )
+    text = " ".join(text.split())
+    if len(text) > TAKE_MAX_CHARS:
+        text = text[:TAKE_MAX_CHARS - 1].rstrip() + "…"
+    return text
+
+
+def wrap_take(text):
+    """(font size, lines): the biggest size that fits in TAKE_MAX_LINES, else
+    the smallest with the overflow cut off."""
+    for size, width in TAKE_SIZES:
+        lines = textwrap.wrap(text, width)
+        if len(lines) <= TAKE_MAX_LINES:
+            return size, lines
+    lines = lines[:TAKE_MAX_LINES]
+    lines[-1] = lines[-1][:width - 1].rstrip() + "…"
+    return size, lines
+
+
+def take_font():
+    if pathlib.Path(TAKE_FONT).exists():
+        return TAKE_FONT
+    try:
+        found = run(["fc-match", "-f", "%{file}", "sans:bold"], check=False).strip()
+    except Exception:
+        found = ""
+    if not found:
+        raise RuntimeError("no font installed to draw the take text with")
+    return found
+
+
+def take_overlay(text, workdir):
+    """drawtext filters (with a leading comma) that draw `text` as centred
+    lines, each on its own translucent box. drawtext can't wrap, so each line
+    is its own filter; the text goes in via files so quotes, colons and %
+    need no escaping."""
+    size, lines = wrap_take(text)
+    font = take_font()
+    step = int(size * 1.75)
+    parts = []
+    for i, line in enumerate(lines):
+        f = workdir / f"take-{i}.txt"
+        f.write_text(line, encoding="utf-8")
+        parts.append(
+            f"drawtext=fontfile={font}:textfile={f}:expansion=none:fontsize={size}:"
+            f"fontcolor=white:box=1:boxcolor=black@0.6:boxborderw={size // 4}:"
+            f"x=(w-text_w)/2:y={TAKE_TOP + i * step}"
+        )
+    return "," + ",".join(parts)
+
+
 # ----------------------------------------------------------------- encoding
 
 
@@ -333,7 +409,9 @@ def _even(expr):
     return f"trunc({expr}/2)*2"
 
 
-def video_filter(info, cfg, box=None):
+def video_filter(info, cfg, box=None, overlay=""):
+    """The whole video filtergraph. `overlay` (e.g. the take text) is drawn
+    last, on the finished 1080x1920 frame, so the polish never touches it."""
     v = cfg["video"]
     w, h = int(v["width"]), int(v["height"])
     crop = float(v.get("crop", 1.0))
@@ -365,7 +443,7 @@ def video_filter(info, cfg, box=None):
     aspect = src_w / src_h
     if abs(aspect - w / h) / (w / h) < 0.04:
         # Already (near enough) 9:16 - fill the frame, no bars at all.
-        return f"[0:v]{pre},{fill}{polish},format=yuv420p[v]"
+        return f"[0:v]{pre},{fill}{polish},format=yuv420p{overlay}[v]"
 
     if v.get("background", "blur") == "blur":
         # Clip centred over a blurred, darkened copy of itself. The blur runs
@@ -377,12 +455,12 @@ def video_filter(info, cfg, box=None):
             f"[a]scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
             f"boxblur=12:3,eq=brightness=-0.10:saturation=0.9,scale={w}:{h},setsar=1[bg];"
             f"[b]{fit}{polish}[fg];"
-            f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,format=yuv420p[v]"
+            f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,format=yuv420p{overlay}[v]"
         )
 
     return (
         f"[0:v]{pre},{fit}{polish},"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[v]"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p{overlay}[v]"
     )
 
 
@@ -409,7 +487,7 @@ def video_bitrate_cap(seconds):
     return int(max(min(15_000_000, budget), 1_000_000))
 
 
-def render(src, dest, info, start, end, cfg, box=None, measured=None, crf_bump=0):
+def render(src, dest, info, start, end, cfg, box=None, measured=None, crf_bump=0, overlay=""):
     v = cfg["video"]
     fps = output_fps(info)
     maxrate = video_bitrate_cap(end - start)
@@ -425,7 +503,7 @@ def render(src, dest, info, start, end, cfg, box=None, measured=None, crf_bump=0
         # happier with a stream present.
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
 
-    cmd += ["-filter_complex", video_filter(info, cfg, box), "-map", "[v]"]
+    cmd += ["-filter_complex", video_filter(info, cfg, box, overlay), "-map", "[v]"]
     if info["has_audio"]:
         cmd += ["-map", "0:a:0"]
         if v.get("loudnorm", True):
@@ -449,9 +527,10 @@ def render(src, dest, info, start, end, cfg, box=None, measured=None, crf_bump=0
 # --------------------------------------------------------------------- main
 
 
-def make_post_video(src, dest, cfg, author):
-    """Edit `src` into `dest`. Returns a dict describing what was done.
-    Raises EditError when the reel can't be made postable at all."""
+def make_post_video(src, dest, cfg, author, take=""):
+    """Edit `src` into `dest`, with `take` (optional text) drawn on top.
+    Returns a dict describing what was done. Raises EditError when the reel
+    can't be made postable at all."""
     v = cfg["video"]
     info = probe(src)
     duration = info["video_duration"]
@@ -496,10 +575,15 @@ def make_post_video(src, dest, cfg, author):
     if info["has_audio"] and v.get("loudnorm", True):
         measured = loudness(src, start, end)
 
-    render(src, dest, info, start, end, cfg, box, measured)
+    take = clean_take(take)
+    overlay = take_overlay(take, dest.parent) if take else ""
+    if take:
+        log(f"    your take on screen: {take!r}")
+
+    render(src, dest, info, start, end, cfg, box, measured, overlay=overlay)
     if dest.stat().st_size > MAX_BYTES:
         log("    over 300 MB - re-encoding at lower quality")
-        render(src, dest, info, start, end, cfg, box, measured, crf_bump=5)
+        render(src, dest, info, start, end, cfg, box, measured, crf_bump=5, overlay=overlay)
 
     out = probe(dest)
     size = dest.stat().st_size
@@ -522,6 +606,7 @@ def make_post_video(src, dest, cfg, author):
         "seconds": round(out["duration"], 2),
         "cover_ms": cover_ms,
         "cover": cover_note,
+        "take": take,
     }
 
 

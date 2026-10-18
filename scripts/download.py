@@ -145,9 +145,10 @@ def fetch(url, cookies, workdir, code):
     return raw, info
 
 
-def fetch_and_edit(url, code, cfg, cookies, workdir):
-    """Download + edit one reel. Returns (raw_path, final_path, meta, edit_info)
-    where meta has `author` (who gets the credit) and `poster` (who posted it)."""
+def fetch_and_edit(url, code, cfg, cookies, workdir, take=""):
+    """Download + edit one reel, with `take` drawn on screen if given.
+    Returns (raw_path, final_path, meta, edit_info) where meta has `author`
+    (who gets the credit) and `poster` (who posted it)."""
     workdir = pathlib.Path(tempfile.mkdtemp(prefix=f"{code}-", dir=workdir))
     raw, info = fetch(url, cookies, workdir, code)
     poster = poster_of(info)
@@ -164,7 +165,7 @@ def fetch_and_edit(url, code, cfg, cookies, workdir):
         log(f"    by @{poster}")
 
     final = workdir / f"{code}.final.mp4"
-    edit_info = make_post_video(raw, final, cfg, author)
+    edit_info = make_post_video(raw, final, cfg, author, take)
     meta = {"author": author, "poster": poster}
     return raw, final, meta, edit_info
 
@@ -222,7 +223,8 @@ def process(item, cfg, cookies, workdir):
         path.unlink()
         return
 
-    _, final, meta, edit_info = fetch_and_edit(item["url"], code, cfg, cookies, workdir)
+    _, final, meta, edit_info = fetch_and_edit(
+        item["url"], code, cfg, cookies, workdir, item.get("take", ""))
     # Name the asset after the queue file, not the shortcode, so two queue
     # entries can never share (or overwrite) one video.
     asset_url = upload(final, f"{path.stem}.mp4")

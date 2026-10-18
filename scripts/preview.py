@@ -39,6 +39,7 @@ def prune_previews():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
+    ap.add_argument("--take", default="")
     args = ap.parse_args()
 
     url = args.url.strip()
@@ -52,7 +53,8 @@ def main():
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="preview-"))
     log(f"--- {code} (preview)")
     raw, final, meta, edit_info = fetch_and_edit(
-        f"https://www.instagram.com/reel/{code}/", code, cfg, write_cookies(), workdir
+        f"https://www.instagram.com/reel/{code}/", code, cfg, write_cookies(), workdir,
+        args.take,
     )
     author = meta["author"]
 
@@ -89,6 +91,7 @@ def main():
         f"- Kept {edit_info['kept'][0]}s - {edit_info['kept'][1]}s "
         f"of {edit_info['source_seconds']}s ({edit_info['outro']})",
         f"- Black bars removed: {'yes' if edit_info['bars_removed'] else 'no'}",
+        f"- Your take: {edit_info['take']!r}" if edit_info["take"] else "- Your take: (none)",
         f"- Caption: `{caption}`",
         f"- [Edited video]({video_url})",
     ]

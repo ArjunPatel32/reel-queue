@@ -4,7 +4,8 @@ change, and safe to run by hand: python scripts/selftest.py
 Covers URL parsing, credit extraction, the daily planner, queue safety
 (duplicates, holds, broken files, git conflicts) and full edits of
 synthetic clips: a "follow @creator" end card, a persistent watermark with
-fast cuts, a reaction still with audio, a silent logo slate, letterboxes.
+fast cuts, a reaction still with audio, a silent logo slate, letterboxes,
+flash/black openings (cover frame) and "your take" text drawn on screen.
 """
 
 import datetime as dt
@@ -246,6 +247,22 @@ def test_git_conflicts():
 # --------------------------------------------------------------- editing
 
 
+def test_take():
+    from edit import TAKE_MAX_LINES, clean_take, wrap_take
+
+    check("take: emoji dropped, spaces collapsed",
+          clean_take("🔥 this   is\nwild ❤️") == "this is wild", repr(clean_take("🔥 this   is\nwild ❤️")))
+    check("take: punctuation kept", clean_take("he's 100% right: no way") == "he's 100% right: no way")
+    check("take: blank stays blank", clean_take("  \n ") == "")
+    size, lines = wrap_take("short one")
+    check("take: short text is one big line", (size, lines) == (64, ["short one"]), (size, lines))
+    size, lines = wrap_take("word " * 20)
+    check("take: long text shrinks to fit", size < 64 and len(lines) <= TAKE_MAX_LINES, (size, lines))
+    size, lines = wrap_take(clean_take("word " * 100))
+    check("take: overflow cut with an ellipsis",
+          len(lines) == TAKE_MAX_LINES and lines[-1].endswith("…"), lines)
+
+
 def ffmpeg(*args):
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *args], check=True)
 
@@ -327,7 +344,7 @@ def test_edit(cfg):
     if not shutil.which("ffmpeg"):
         print("skip edit tests (no ffmpeg)")
         return
-    from edit import contact_sheet, loudness, make_post_video, probe
+    from edit import contact_sheet, loudness, make_post_video, ocr_at, probe
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="selftest-"))
 
@@ -384,6 +401,15 @@ def test_edit(cfg):
         clip_opening(src, colour)
         info = make_post_video(src, tmp / f"{colour}-open-out.mp4", cfg, "someone")
         check(f"cover skips a {colour} opening", info["cover_ms"] > 900, info)
+
+    out = tmp / "take-out.mp4"
+    info = make_post_video(plain, out, cfg, "testcreator",
+                           take="this robot dog is a total genius and nobody talks about it 🔥")
+    check("take recorded (emoji dropped)", info["take"].endswith("talks about it"), info)
+    check("take keeps full length", info["kept"][1] >= 8.9, info)
+    seen = ocr_at(out, 2.0, tmp)
+    check("take text readable on screen", "genius" in seen or "robot" in seen, seen[:200])
+    shutil.copy(out, keep / "selftest-take.mp4")
     measured = loudness(plain, 0, 9)
     check("loudness measured", bool(measured and "input_i" in measured), measured)
 
@@ -400,6 +426,7 @@ if __name__ == "__main__":
     test_queue_files()
     test_next_ready()
     test_git_conflicts()
+    test_take()
     test_edit(cfg)
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)

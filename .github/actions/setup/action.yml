@@ -41,7 +41,7 @@ runs:
       uses: actions/cache/restore@v5
       with:
         path: ~/apt-debs
-        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v1
+        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v2
 
     - if: inputs.media-tools == 'true'
       id: install
@@ -51,7 +51,7 @@ runs:
         # minutes on these runners; we never read man pages.
         sudo rm -f /var/lib/man-db/auto-update
         export DEBIAN_FRONTEND=noninteractive
-        pkgs="ffmpeg tesseract-ocr"
+        pkgs="ffmpeg tesseract-ocr fonts-dejavu-core"
         if compgen -G "$HOME/apt-debs/*.deb" > /dev/null \
            && sudo -E apt-get install -y -qq --no-download "$HOME"/apt-debs/*.deb; then
           echo "installed $pkgs from the cache"
@@ -78,4 +78,4 @@ runs:
       uses: actions/cache/save@v5
       with:
         path: ~/apt-debs
-        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v1
+        key: apt-debs-${{ steps.image.outputs.version }}-ffmpeg-tesseract-v2

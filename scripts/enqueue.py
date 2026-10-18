@@ -1,6 +1,7 @@
 """Write a shared reel URL into queue/ as a pending item.
 
-Called by the ingest workflow with the URL your iPhone Shortcut sent.
+Called by the ingest workflow with the URL your iPhone Shortcut sent, plus
+your take (optional text to show on screen) if you typed one.
 This runs before any download is attempted so a shared reel is never lost,
 even if Instagram blocks the download for the next several hours.
 """
@@ -74,6 +75,7 @@ def shared_at():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
+    ap.add_argument("--take", default="")
     args = ap.parse_args()
 
     # The share sheet sometimes hands over "caption text https://..." rather
@@ -110,9 +112,12 @@ def main():
     }
     if needs_resolve:
         item["needs_resolve"] = True
+    take = args.take.strip()
+    if take:
+        item["take"] = take
     name = f"{when.strftime('%Y%m%dT%H%M%S')}-{code}.json"
     write_item(QUEUE / name, item)
-    log(f"queued {code} -> queue/{name}")
+    log(f"queued {code} -> queue/{name}" + (f" with your take: {take!r}" if take else ""))
 
     # Tell the workflow which item to download straight away.
     output = os.environ.get("GITHUB_OUTPUT")
