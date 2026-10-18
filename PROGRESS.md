@@ -2,12 +2,24 @@
 
 Running record of what's done and what's next, so we can pick this up cold.
 
-**Status (2026-10-17): LIVE. The whole pipeline works end to end — Arjun's
-iPhone Shortcut queues reels, they're downloaded/edited/credited on GitHub's
-runners, and the first real post went out (DejmsgsOiax, 17:26 PT). SETUP
-steps 1–7 done; Arjun says "looks like it works". Remaining items are
-optional: cron-job.org for punctual posting (step 9), outro test on a real
-end card, and confirming posts are visible logged-out (Dev-mode app).**
+**Status (2026-10-17, end of session): LIVE. The whole pipeline works end
+to end — Arjun's iPhone Shortcut queues reels, they're downloaded/edited/
+credited on GitHub's runners, and the first real post went out
+(DejmsgsOiax, 17:26 PT). Same evening: auto cover frame + "your take"
+on-screen text built and live. Instagram limited his account to
+followers-only reach (originality rule).**
+
+**▶ PICK UP HERE next time (in this order):**
+1. Did he add the **Ask for Input → `take`** step to his Shortcut (SETUP
+   step 2, "Your take")? Have him share one reel with a take; check it
+   lands in `ready/` with `take` set and looks right (Preview edit shows it).
+2. **New Instagram account?** He's leaning yes (old one still flagged after
+   archiving 33 posts). Walk him through: new IG → Professional; old IG
+   Edit profile → Page → disconnect; new IG → connect the same Page; Graph
+   Explorer token (SETUP step 5 "Easier route", tick the NEW account) →
+   replace both secrets; `post_now` test. App/Shortcut/code unchanged.
+3. Check the next real post's grid cover (first live use of `thumb_offset`).
+4. Optional: cron-job.org (step 9), outro test on a real end card.
 
 ---
 
