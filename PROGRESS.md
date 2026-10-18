@@ -251,8 +251,31 @@ profile ("Your phone number has been added") — use the credit-card option or
 remove the number first. Note for future sessions: links to `media` release
 assets 404 once a reel posts (deleted by design) — use Preview edit to show
 him a reel's edit.
-**Resume at:** nothing required. Offer step 9 (cron-job.org) and an outro
-test if he wants; check the Actions tab for failures (token death emails).
+Later that evening:
+- **White grid cover** on the first post — the API uses frame 0, and that
+  reel opens on a white flash. Fixed in a31fb09: `edit.pick_cover` keeps
+  frame 0 if usable, else the most contrasty frame in the first 8 s that
+  isn't washed out/near-black/flat; `post.py` sends it as `thumb_offset`;
+  Preview shows the cover. Selftest 3 new cases, all green; Preview on
+  DejmsgsOiax picked 4.0 s (good frame). **`thumb_offset` not yet verified
+  live** — check the next post's grid cover. Items queued before a31fb09
+  have no `cover_ms` and get Meta's default.
+- **Instagram flagged the account: "content can't be shown to people who
+  don't follow you."** That's the April 2026 originality update: accounts
+  whose posts are MOSTLY others' content are excluded from recommendations
+  (account-level; rolling ~30 days; followers still see everything). Arjun
+  archived a bunch of posts. Counts as original per Instagram: on-screen
+  text adding the poster's own context, graphics adding info, commentary,
+  Remix. Doesn't: credit, crops, colour, watermarks. Music swap: no
+  evidence it counts, API can't add IG music anyway, outside music =
+  copyright risk. Offered (not built, awaiting his answer): optional "your
+  take" text — Shortcut asks for a line, bot burns it on screen. Also told
+  him a fresh account is ~15–20 min (move Page link, redo step 5 + secrets;
+  app/Shortcut/code unchanged) but hits the same rule if it only reposts.
+
+**Resume at:** ask if he wants the "your take" text overlay; check the next
+post's cover used `thumb_offset`. Optional: step 9 (cron-job.org), outro
+test. Check the Actions tab for failures (token death emails).
 **Resume at: SETUP.md step 2 (iPhone Shortcut), then steps 3–6 (Meta).** Offer
 to walk him through each screen. Also check the Actions tab: had the hourly
 post cron started firing? If not, suggest SETUP step 9 (cron-job.org).
