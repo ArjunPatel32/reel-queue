@@ -8,6 +8,7 @@
   3. Strip baked-in black bars, reframe to 1080x1920 (blurred fill for clips
      that aren't 9:16), polish colour/sharpness, level the loudness, and
      encode to Instagram's Reels spec.
+  4. Pick the cover frame for the profile grid.
 
 Everything here is plain ffmpeg + tesseract on the GitHub runner. Each step
 logs what it decided, so a bad cut is easy to trace back from the Actions log.
@@ -40,6 +41,14 @@ MIN_SECONDS, MAX_SECONDS = 3, 900
 MAX_BYTES = 300 * 1_000_000
 # Below this the audio over a still frame counts as silence.
 SILENT_DB = -45.0
+# Cover frame: Instagram uses the first frame unless told otherwise, and on
+# a lot of reels that's a white flash or a fade from black. Candidates come
+# from the first few seconds; a usable one has average luma (8-bit, limited
+# range 16-235) inside COVER_LUMA and a 10th-90th percentile spread of at
+# least COVER_MIN_SPREAD (rules out flat colour and washed-out fades).
+COVER_SEARCH_SECONDS = 8
+COVER_LUMA = (32, 200)
+COVER_MIN_SPREAD = 40
 
 
 class EditError(RuntimeError):
@@ -126,6 +135,43 @@ def mean_volume(path, start, end):
     if not m:
         return None
     return -math.inf if m.group(1) == "-inf" else float(m.group(1))
+
+
+def pick_cover(path, duration):
+    """(milliseconds, note) for the cover frame of the edited clip. Keeps the
+    first frame when it's usable - it's usually the creator's hook - and
+    otherwise takes the most contrasty usable frame. 0 when none is usable."""
+    out = _ffmpeg_log([
+        "-t", f"{min(duration, COVER_SEARCH_SECONDS):.3f}", "-i", str(path), "-an",
+        "-vf", "fps=5,scale=160:-2,signalstats,metadata=print",
+    ])
+    frames = []
+    for line in out.splitlines():
+        m = re.search(r"pts_time:([\d.]+)", line)
+        if m:
+            frames.append({"t": float(m.group(1))})
+            continue
+        m = re.search(r"lavfi\.signalstats\.(YAVG|YLOW|YHIGH)=([\d.]+)", line)
+        if m and frames:
+            frames[-1][m.group(1)] = float(m.group(2))
+
+    usable = [
+        f for f in frames
+        if {"YAVG", "YLOW", "YHIGH"} <= f.keys()
+        and COVER_LUMA[0] <= f["YAVG"] <= COVER_LUMA[1]
+        and f["YHIGH"] - f["YLOW"] >= COVER_MIN_SPREAD
+    ]
+    if not frames:
+        return 0, "first frame (couldn't analyse)"
+    if usable and usable[0]["t"] < 0.1:
+        return 0, "first frame"
+    first = frames[0].get("YAVG")
+    why = ("too bright" if first is not None and first > COVER_LUMA[1]
+           else "too dark" if first is not None and first < COVER_LUMA[0] else "flat")
+    if not usable:
+        return 0, f"first frame (it's {why}, but nothing better in the first {COVER_SEARCH_SECONDS}s)"
+    best = max(usable, key=lambda f: f["YHIGH"] - f["YLOW"])
+    return int(best["t"] * 1000), f"frame at {best['t']:.1f}s (first frame is {why})"
 
 
 def content_box(path, info, start, end):
@@ -463,6 +509,9 @@ def make_post_video(src, dest, cfg, author):
     if size > MAX_BYTES:
         raise EditError(f"edited clip is {size / 1_000_000:.0f} MB, over Instagram's 300 MB limit")
 
+    cover_ms, cover_note = pick_cover(dest, out["video_duration"])
+    log(f"    cover: {cover_note}")
+
     return {
         "source_seconds": round(duration, 2),
         "kept": [round(start, 3), round(end, 3)],
@@ -471,6 +520,8 @@ def make_post_video(src, dest, cfg, author):
         "has_audio": info["has_audio"],
         "foreign_watermark": watermarks,
         "seconds": round(out["duration"], 2),
+        "cover_ms": cover_ms,
+        "cover": cover_note,
     }
 
 

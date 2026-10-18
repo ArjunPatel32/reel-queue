@@ -223,16 +223,19 @@ def check_token(ig_user_id):
     log(f"token OK - posting as @{body.get('username')}")
 
 
-def create_container(ig_user_id, caption):
+def create_container(ig_user_id, caption, cover_ms=0):
     """Resumable upload: we send Meta the file bytes directly, so it never has
     to fetch a URL (GitHub's release links are blocked by robots.txt, redirect,
-    and are served as application/octet-stream)."""
+    and are served as application/octet-stream). `cover_ms` picks the grid
+    cover frame (thumb_offset); Meta's default is the first frame."""
+    extra = {"thumb_offset": str(int(cover_ms))} if cover_ms else {}
     body = graph_post(
         f"{ig_user_id}/media",
         media_type="REELS",
         upload_type="resumable",
         caption=caption,
         share_to_feed="true",
+        **extra,
     )
     return body["id"]
 
@@ -402,7 +405,7 @@ def post_one(item, cfg, ig_user_id):
         creation_id = None  # expired/errored - start over
 
     video = download_asset(item["asset_url"])
-    creation_id = create_container(ig_user_id, caption)
+    creation_id = create_container(ig_user_id, caption, item.get("edit", {}).get("cover_ms", 0))
     upload_bytes(creation_id, video)
     await_ready(creation_id)
     item["copyright_check"] = copyright_check(creation_id)

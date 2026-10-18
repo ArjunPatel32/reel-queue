@@ -18,9 +18,9 @@ from edit import contact_sheet
 from enqueue import SHARE_LINK, resolve_share_link, shortcode_of
 
 TAG = "preview"
-# Keep the newest previews (two files each); older ones are deleted so the
+# Keep the newest previews (three files each); older ones are deleted so the
 # release doesn't grow forever (a release holds at most 1000 files).
-KEEP_FILES = 20
+KEEP_FILES = 30
 
 
 def prune_previews():
@@ -67,6 +67,16 @@ def main():
     except Exception as exc:
         log(f"(couldn't draw the before/after strip: {str(exc)[-200:]})")
         sheet_url = None
+    cover = workdir / f"{code}-cover.jpg"
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{edit_info['cover_ms'] / 1000:.3f}",
+            "-i", str(staged), "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(cover),
+        ], check=True, capture_output=True)
+        cover_url = upload(cover, cover.name, tag=TAG, title="Edit previews")
+    except Exception as exc:
+        log(f"(couldn't save the cover frame: {str(exc)[-200:]})")
+        cover_url = None
     prune_previews()
     caption = build_caption(cfg, author)
 
@@ -84,6 +94,8 @@ def main():
     ]
     if sheet_url:
         lines.append(f"- [Before/after frames]({sheet_url}) (top: original, bottom: edited)")
+    cover_line = f"- Cover: {edit_info['cover']}"
+    lines.append(f"{cover_line} - [see it]({cover_url})" if cover_url else cover_line)
     if not edit_info["has_audio"]:
         lines.append("- ⚠️ No audio track - the queue would park this one instead of posting it")
     if edit_info["foreign_watermark"]:

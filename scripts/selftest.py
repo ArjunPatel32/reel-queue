@@ -310,6 +310,19 @@ def clip_cinemascope(path):
     )
 
 
+def clip_opening(path, colour):
+    """1s of flat colour (a white flash, or black before a fade-in), then 5s
+    of test pattern."""
+    ffmpeg(
+        "-f", "lavfi", "-i", f"color=c={colour}:size=1080x1920:rate=30:duration=1",
+        "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30:duration=5",
+        "-f", "lavfi", "-i", "sine=frequency=300:duration=6",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-shortest", str(path),
+    )
+
+
 def test_edit(cfg):
     if not shutil.which("ffmpeg"):
         print("skip edit tests (no ffmpeg)")
@@ -364,6 +377,13 @@ def test_edit(cfg):
     info = make_post_video(plain, tmp / "plain-out.mp4", cfg, "testcreator")
     check("no-outro clip keeps full length", info["kept"][1] >= 8.9, info)
     check("full-frame clip not cropped", not info["bars_removed"], info)
+    check("usable first frame stays the cover", info["cover_ms"] == 0, info)
+
+    for colour in ("white", "black"):
+        src = tmp / f"{colour}-open.mp4"
+        clip_opening(src, colour)
+        info = make_post_video(src, tmp / f"{colour}-open-out.mp4", cfg, "someone")
+        check(f"cover skips a {colour} opening", info["cover_ms"] > 900, info)
     measured = loudness(plain, 0, 9)
     check("loudness measured", bool(measured and "input_i" in measured), measured)
 
