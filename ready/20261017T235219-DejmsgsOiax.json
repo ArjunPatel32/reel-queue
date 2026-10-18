@@ -19,5 +19,9 @@
     "has_audio": true,
     "foreign_watermark": [],
     "seconds": 6.17
-  }
+  },
+  "copyright_check": {
+    "status": "not_started"
+  },
+  "creation_id": "18123878023968916"
 }
